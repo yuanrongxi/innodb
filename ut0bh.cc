@@ -101,5 +101,45 @@ UNIV_INTERN void* ib_bh_push(ib_bh_t* ib_bh, const void* elem)
 	}
 }
 
+UNIV_INTERN void ib_bh_pop(ib_bh_t* ib_bh)
+{
+	byte* ptr;
+	byte* last;
+	ulint parent = 0;
+
+	if(ib_bh_is_empty(ib_bh))
+		return;
+	else if(ib_bh_size(ib_bh) == 1){
+		--ib_bh->n_elems;
+		return;
+	}
+
+	last = (byte *)ib_bh_last(ib_bh);
+	ptr = (byte*)ib_bh_get(ib_bh, 1);
+
+	/*调整LAST的位置，将最小值放到heap的前面,首先将1下标的位置填充0的位置，然后再在剩余的中找最小的填补1，一次类推*/
+	while(ptr < last){
+		if(ib_bh->compare(ptr + ib_bh->sizeof_elem, ptr) < 0)
+			ptr += ib_bh->sizeof_elem;
+
+		if(ib_bh->compare(last, ptr) <= 0)
+			break;
+
+		ib_bh_set(ib_bh, parent, ptr);
+
+		parent = (ptr - (byte*)ib_bh_first(ib_bh)) / ib_bh->sizeof_elem;
+
+		if((parent << 1) >= ib_bh_size(ib_bh))
+			break;
+		/*在下一段找*/
+		ptr = (byte *)ib_bh_get(ib_bh, parent << 1);
+	}
+
+	--ib_bh->n_elems;
+	ib_bh_set(ib_bh, parent, last);
+}
+
+
+
 
 
