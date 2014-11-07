@@ -78,21 +78,27 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="db0err.h" />
+    <ClInclude Include="hash0hash.h" />
     <ClInclude Include="ul0crc32.h" />
     <ClInclude Include="ut0bh.h" />
     <ClInclude Include="ut0byte.h" />
+    <ClInclude Include="ut0dbg.h" />
     <ClInclude Include="ut0list.h" />
     <ClInclude Include="ut0lst.h" />
+    <ClInclude Include="ut0rbt.h" />
     <ClInclude Include="ut0rnd.h" />
     <ClInclude Include="ut0ut.h" />
     <ClInclude Include="ut0vec.h" />
     <ClInclude Include="ut0wqueque.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="hash0hash.cc" />
     <ClCompile Include="ul0crc32.cc" />
     <ClCompile Include="ut0bh.cc" />
     <ClCompile Include="ut0byte.cc" />
+    <ClCompile Include="ut0dbg.cc" />
     <ClCompile Include="ut0list.cc" />
+    <ClCompile Include="ut0rbt.cc" />
     <ClCompile Include="ut0rnd.cc" />
     <ClCompile Include="ut0ut.cc" />
     <ClCompile Include="ut0vec.cc" />
