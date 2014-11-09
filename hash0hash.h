@@ -114,7 +114,7 @@ UNIV_INTERN void hash_unlock_x_all_put(hash_table_t* table, rw_lock_t* keep_lock
 do{ \
 	hash_cell_t*		cell3333; \
 	TYPE*				struct333; \
-	(DATA)->NAME_BUFFER = NULL; \
+	(DATA)->NAME = NULL; \
 	cell3333 = hash_get_nth_cell(TABLE, hash_calc_hash(FOLD, TABLE)); \
 	if(cell3333->node == NULL) \
 		cell3333->node = DATA; \
@@ -151,7 +151,7 @@ do{ \
 }while(0)
 
 /*获得cell的第一个单元*/
-#define HASH_GET_FIRST(TABLE, HASH_VAL) (hash_get_nth_cell(TABLE, HASH_VAL)->NODE)
+#define HASH_GET_FIRST(TABLE, HASH_VAL) (hash_get_nth_cell(TABLE, HASH_VAL)->node)
 /*获得data的下一个单元*/
 #define HASH_GET_NEXT(NAME, DATA) ((DATA)->NAME)
 
