@@ -1,0 +1,123 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="unit">
+      <UniqueIdentifier>{a3aed0ca-ee5c-4ec9-84c4-f24f4d354e42}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="mem">
+      <UniqueIdentifier>{c3a89423-8392-4095-ae2e-dd144f512332}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="univ.h">
+      <Filter>Resource Files</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ut0byte.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0ut.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="db0err.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0rnd.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0list.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0lst.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0vec.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ul0crc32.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0wqueque.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0bh.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0dbg.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0rbt.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="hash0hash.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ha0ha.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="ha0storage.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="mem0pool.h">
+      <Filter>mem</Filter>
+    </ClInclude>
+    <ClInclude Include="ut0mem.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+    <ClInclude Include="rem0types.h">
+      <Filter>unit</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ut0byte.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0ut.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0rnd.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0list.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0vec.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ul0crc32.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0wqueue.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0bh.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0dbg.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0rbt.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="hash0hash.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ha0ha.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="ha0storage.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="mem0pool.cc">
+      <Filter>mem</Filter>
+    </ClCompile>
+    <ClCompile Include="ut0mem.cc">
+      <Filter>unit</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>
