@@ -81,6 +81,8 @@
     <ClInclude Include="ha0ha.h" />
     <ClInclude Include="ha0storage.h" />
     <ClInclude Include="hash0hash.h" />
+    <ClInclude Include="mem0dbg.h" />
+    <ClInclude Include="mem0mem.h" />
     <ClInclude Include="mem0pool.h" />
     <ClInclude Include="rem0types.h" />
     <ClInclude Include="ul0crc32.h" />
@@ -100,6 +102,8 @@
     <ClCompile Include="ha0ha.cc" />
     <ClCompile Include="ha0storage.cc" />
     <ClCompile Include="hash0hash.cc" />
+    <ClCompile Include="mem0dbg.cc" />
+    <ClCompile Include="mem0mem.cc" />
     <ClCompile Include="mem0pool.cc" />
     <ClCompile Include="ul0crc32.cc" />
     <ClCompile Include="ut0bh.cc" />

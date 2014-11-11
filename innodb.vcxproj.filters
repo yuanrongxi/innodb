@@ -72,6 +72,12 @@
     <ClInclude Include="rem0types.h">
       <Filter>unit</Filter>
     </ClInclude>
+    <ClInclude Include="mem0dbg.h">
+      <Filter>mem</Filter>
+    </ClInclude>
+    <ClInclude Include="mem0mem.h">
+      <Filter>mem</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -118,6 +124,12 @@
     </ClCompile>
     <ClCompile Include="ut0mem.cc">
       <Filter>unit</Filter>
+    </ClCompile>
+    <ClCompile Include="mem0dbg.cc">
+      <Filter>mem</Filter>
+    </ClCompile>
+    <ClCompile Include="mem0mem.cc">
+      <Filter>mem</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
