@@ -11,6 +11,8 @@
 
 #define hash_create hash0_create
 
+typedef void*	hash_node_t;
+
 /*这个枚举会指定hash_table_t中的sync_obj*/
 enum hash_table_sync_t
 {
@@ -155,7 +157,7 @@ do{ \
 /*获得data的下一个单元*/
 #define HASH_GET_NEXT(NAME, DATA) ((DATA)->NAME)
 
-#define HASH_SEACH(NAME, TABLE, FOLD, TYPE, DATA, ASSERTION, TEST) \
+#define HASH_SEARCH(NAME, TABLE, FOLD, TYPE, DATA, ASSERTION, TEST) \
 { \
 	HASH_ASSERT_OWN(TABLE, FOLD); \
 	(DATA) = (TYPE)HASH_GET_FIRST(TABLE, hash_calc_hash(FOLD, TABLE)); \

@@ -11,6 +11,15 @@
     <Filter Include="mem">
       <UniqueIdentifier>{c3a89423-8392-4095-ae2e-dd144f512332}</UniqueIdentifier>
     </Filter>
+    <Filter Include="os">
+      <UniqueIdentifier>{50962df1-cc76-44e7-9415-099528f12d5f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="thr">
+      <UniqueIdentifier>{cd21fd8d-385e-41b6-a283-2e48ae158b0d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="sync">
+      <UniqueIdentifier>{1d9d6728-4978-4f9b-aa81-e9cacc76687d}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -78,6 +87,21 @@
     <ClInclude Include="mem0mem.h">
       <Filter>mem</Filter>
     </ClInclude>
+    <ClInclude Include="os0sync.h">
+      <Filter>os</Filter>
+    </ClInclude>
+    <ClInclude Include="os0thread.h">
+      <Filter>os</Filter>
+    </ClInclude>
+    <ClInclude Include="thr0loc.h">
+      <Filter>thr</Filter>
+    </ClInclude>
+    <ClInclude Include="sync0types.h">
+      <Filter>sync</Filter>
+    </ClInclude>
+    <ClInclude Include="sync0sync.h">
+      <Filter>sync</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -130,6 +154,18 @@
     </ClCompile>
     <ClCompile Include="mem0mem.cc">
       <Filter>mem</Filter>
+    </ClCompile>
+    <ClCompile Include="os0sunc.cc">
+      <Filter>os</Filter>
+    </ClCompile>
+    <ClCompile Include="os0thread.cc">
+      <Filter>os</Filter>
+    </ClCompile>
+    <ClCompile Include="thr0loc.cc">
+      <Filter>thr</Filter>
+    </ClCompile>
+    <ClCompile Include="sync0sync.cc">
+      <Filter>sync</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

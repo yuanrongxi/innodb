@@ -84,7 +84,12 @@
     <ClInclude Include="mem0dbg.h" />
     <ClInclude Include="mem0mem.h" />
     <ClInclude Include="mem0pool.h" />
+    <ClInclude Include="os0sync.h" />
+    <ClInclude Include="os0thread.h" />
     <ClInclude Include="rem0types.h" />
+    <ClInclude Include="sync0sync.h" />
+    <ClInclude Include="sync0types.h" />
+    <ClInclude Include="thr0loc.h" />
     <ClInclude Include="ul0crc32.h" />
     <ClInclude Include="ut0bh.h" />
     <ClInclude Include="ut0byte.h" />
@@ -105,6 +110,10 @@
     <ClCompile Include="mem0dbg.cc" />
     <ClCompile Include="mem0mem.cc" />
     <ClCompile Include="mem0pool.cc" />
+    <ClCompile Include="os0sunc.cc" />
+    <ClCompile Include="os0thread.cc" />
+    <ClCompile Include="sync0sync.cc" />
+    <ClCompile Include="thr0loc.cc" />
     <ClCompile Include="ul0crc32.cc" />
     <ClCompile Include="ut0bh.cc" />
     <ClCompile Include="ut0byte.cc" />
