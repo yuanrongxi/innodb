@@ -240,7 +240,7 @@ void sync_array_wait_event(sync_array_t* arr, ulint index)
 	sync_array_free_cell(arr, index);
 }
 
-static void sync_array_cell_print(char* buf, sync_cell_t*	cell)
+static void sync_array_cell_print(char* buf, sync_cell_t* cell)
 {
 	mutex_t*	mutex;
 	rw_lock_t*	rwlock;
@@ -366,7 +366,258 @@ static ibool sync_array_detect_deadlock(sync_array_t* arr, sync_cell_t* start, s
 	ibool				ret;
 	rw_lock_debug_t*	debug;
 	char				buf[500];
+
+	ut_a(arr && start && cell);
+	ut_ad(cell->wait_object);
+	ut_ad(os_thread_get_curr_id() == start->thread);
+	ut_ad(depth);
+
+	depth ++;
+	if(cell->event_set || !cell->waiting) /*这个cell无锁正在等待*/
+		return FALSE;
+
+	if(cell->request_type == SYNC_MUTEX){
+		mutex = cell->wait_object;
+		if(mutex_get_lock_word(mutex) != 0){ /*这个cell不能获得锁，正在等待中*/
+			thread = mutex->thread_id;
+			/*判断它等待获取的这个锁被那个线程获取了，从而得出获取锁的线程是不是也在等待，这里用了交叉递归的方式做判断*/
+			ret = sync_array_deadlock_step(arr, start, thread, 0, depth);
+			if(ret){ /*死锁了，打印死锁的日志*/
+				sync_array_cell_print(buf, cell);
+				printf("Mutex %lx owned by thread %lu file %s line %lu\n%s", (ulint)mutex, os_thread_pf(mutex->thread_id),
+					mutex->file_name, mutex->line, buf);
+
+				return TRUE;
+			}
+		}
+
+		return FALSE;
+	}
+	else if(cell->request_type == RW_LOCK_EX){ /*是一个rw_lock X-latch*/
+		lock = cell->wait_object;
+		debug = UT_LIST_GET_FIRST(lock->debug_list);
+		while(debug != NULL){
+			/*独占锁不能与任何rw_lock兼容，其中包括非同一线程的x-latch和x-wait-latch、S-latch*/
+			if(((debug->lock_type == RW_LOCK_EX) && !os_thread_eq(thread, cell->thread))
+				|| ((debug->lock_type == RW_LOCK_WAIT_EX)&& !os_thread_eq(thread, cell->thread))
+				|| (debug->lock_type == RW_LOCK_SHARED)){
+					ret = sync_array_deadlock_step(arr, start, thread, debug->pass, depth);
+					if(ret){
+						sync_array_cell_print(buf, cell);
+						printf("rw-lock %lx %s ", (ulint) lock, buf);
+						rw_lock_debug_print(debug);
+
+						return(TRUE);
+					}
+			}
+			debug = UT_LIST_GET_NEXT(list, debug);
+		}
+		return FALSE;
+	}
+	else if(cell->request_type == RW_LOCK_SHARED){ /*是rw_lock S-latch*/
+		lock = cell->wait_object;
+		debug = UT_LIST_GET_FIRST(lock->debug_list);
+		while(debug != NULL){
+			thread = debug->thread_id;
+			/*S-latch不能和任何X-latch兼容，只和S-latch兼容*/
+			if(debug->lock_type == RW_LOCK_EX || debug->lock_type == RW_LOCK_WAIT_EX){
+				ret = sync_array_deadlock_step(arr, start, thread, debug->pass, depth);
+				if(ret){
+					sync_array_cell_print(buf, cell);
+					printf("rw-lock %lx %s ", (ulint) lock, buf);
+					rw_lock_debug_print(debug);
+
+					return(TRUE);
+				}
+			}
+			debug->UT_LIST_GET_NEXT(list, debug);
+		}
+		return FALSE;
+	}
+	else{ /*latch的类型不明*/
+		ut_error;
+	}
+
+	return TRUE;
 }
+
+/*确定是否可以唤醒一个线程来获得锁*/
+static ibool sync_arr_cell_can_wake_up(sync_cell_t* cell)
+{
+	mutex_t*	mutex;
+	rw_lock_t*	lock;
+
+	if(cell->request_type == SYNC_MUTEX){
+		mutex = cell->wait_object;
+		if(mutex_get_lock_word(mutex) == 0) /*锁是空闲的，可以获得锁*/
+			return TRUE;
+	}
+	else if(cell->request_type == RW_LOCK_EX){
+		lock = cell->wait_object;
+		/*x-latch处理no locked状态,可以获得锁*/
+		if(rw_lock_get_reader_count(lock) == 0 && rw_lock_get_writer(lock) == RW_LOCK_NOT_LOCKED){
+			return TRUE;
+		}
+
+		/*x-latch处于wait状态，但是处于同一线程当中，可以获得锁*/
+		if (rw_lock_get_reader_count(lock) == 0 && rw_lock_get_writer(lock) == RW_LOCK_WAIT_EX
+			&& os_thread_eq(lock->writer_thread, cell->thread)) {
+				return(TRUE);
+		}
+	}
+	else if(cell->request_type == RW_LOCK_SHARED){ /*S-latch*/
+		lock = cell->wait_object;
+		/*处于no locked状态，可以获得锁*/
+		if(rw_lock_get_writer(lock) == RW_LOCK_NOT_LOCKED)
+			return TRUE;
+	}
+
+	return FALSE;
+}
+/*释放一个array cell单元,会自动释放sync_array_wait_event的信号，在这个cell重新使用的时候，会reset_event*/
+static ibool sync_array_free_cell(sync_array_t* arr, ulint index)
+{
+	sync_cell_t* cell;
+	sync_array_enter(arr);
+	
+	cell = sync_array_get_nth_cell(arr, index);
+	ut_ad(cell->wait_object != NULL);
+
+	cell->wait_object = NULL;
+	ut_a(arr->n_reserved > 0);
+	arr->n_reserved --;
+
+	sync_array_exit(arr);
+}
+
+/*发送信号，让所有等待的cell全部放弃等待来获取各自的锁*/
+void sync_array_signal_object(sync_array_t* arr, void* object)
+{
+	sync_cell_t*		cell;
+	ulint				count;
+	ulint				i;
+
+	sync_array_enter(arr);
+	arr->sg_count ++;
+
+	i = 0;
+	count = 0;
+	while(count < arr->n_reserved){ /*遍历所有占用的cell,统一发送signal*/
+		cell = sync_array_get_nth_cell(arr, i);
+		if(cell->wait_object != NULL){
+			if(cell->wait_object == object)
+				sync_cell_event_set(cell);
+		}
+		i ++;
+	}
+	sync_array_exit(arr);
+}
+
+/*每秒必须调用一次这个函数，主要作用是释放所有可以获得锁的cell*/
+void sync_arr_wake_threads_if_sema_free()
+{
+	sync_array_t*	arr = sync_primary_wait_array;
+	sync_cell_t*	cell;
+	ulint			count;
+	ulint			i;
+
+	sync_array_enter(arr);
+	i = 0;
+	count = 0;
+	while(count < arr->n_reserved){
+		cell = sync_array_get_nth_cell(arr, i);
+		if(cell->wait_object != NULL){
+			count ++;
+			if(sync_arr_cell_can_wake_up(cell)) /*判断锁是否可以获得*/
+				sync_cell_event_set(cell);
+		}
+		i ++;
+	}
+
+	sync_array_exit(arr);
+}
+
+void sync_array_print_long_waits()
+{
+	sync_cell_t*   	cell;
+	ibool		old_val;
+	ibool		noticed = FALSE;
+	char		buf[500];
+	ulint           i;
+
+	for (i = 0; i < sync_primary_wait_array->n_cells; i++) {
+		cell = sync_array_get_nth_cell(sync_primary_wait_array, i);
+		if (cell->wait_object != NULL && difftime(time(NULL), cell->reservation_time) > 240) { /*cell占用的时间超过240秒，可以判断是一个长信号*/
+				sync_array_cell_print(buf, cell);
+				fprintf(stderr, "InnoDB: Warning: a long semaphore wait:\n%s", buf);
+				noticed = TRUE;
+		}
+
+		if (cell->wait_object != NULL
+			&& difftime(time(NULL), cell->reservation_time) > 600) { /*服务器可能僵死了*/
+				fprintf(stderr, "InnoDB: Error: semaphore wait has lasted > 600 seconds\n"
+					"InnoDB: We intentionally crash the server, because it appears to be hung.\n");
+				ut_a(0);
+		}
+	}
+
+	if (noticed) {
+		fprintf(stderr,"InnoDB: ###### Starts InnoDB Monitor for 30 secs to print diagnostic info:\n");
+
+		old_val = srv_print_innodb_monitor;
+		srv_print_innodb_monitor = TRUE;
+		os_event_set(srv_lock_timeout_thread_event);
+
+		os_thread_sleep(30000000);
+
+		srv_print_innodb_monitor = old_val;
+		fprintf(stderr, "InnoDB: ###### Diagnostic info printed to the standard output\n");
+	}
+}
+
+static void sync_array_output_info(char* buf, char*	buf_end, sync_array_t* arr)	
+{
+	sync_cell_t*   	cell;
+	ulint           count;
+	ulint           i;
+
+	if (buf_end - buf < 500)
+		return;
+
+	buf += sprintf(buf,"OS WAIT ARRAY INFO: reservation count %ld, signal count %ld\n", arr->res_count, arr->sg_count);
+	i = 0;
+	count = 0;
+
+	while (count < arr->n_reserved){
+		if (buf_end - buf < 500) /*判断缓冲区长度*/
+			return;
+
+		cell = sync_array_get_nth_cell(arr, i);
+		if(cell->wait_object != NULL){
+			count++;
+			sync_array_cell_print(buf, cell);
+			buf = buf + strlen(buf);
+		}
+		i++;
+	}
+}
+
+void sync_array_print_info(char* buf, char* buf_end, sync_array_t* arr)
+{
+	sync_array_enter(arr);
+	sync_array_output_info(buf, buf_end, arr);
+	sync_array_exit(arr);
+}
+
+
+
+
+
+
+
+
+
+
 
 
 
