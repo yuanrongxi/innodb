@@ -82,7 +82,7 @@ ibool				sync_all_freed();
 void				sync_print_wait_info(char* buf, char* buf_end);
 void				sync_print(char* buf, char* buf_end);
 
-ibool				mutex_validate(mutex_t* mutex, ulint level);
+ibool				mutex_validate(mutex_t* mutex);
 void				mutex_set_level(mutex_t* mutex, level);
 void				sync_thread_add_level(void* latch, ulint level);
 void				sync_thread_reset_level(void* latch);
