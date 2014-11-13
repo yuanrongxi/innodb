@@ -119,20 +119,21 @@ extern ibool sync_initialized;
 
 struct mutex_struct
 {
-	ulint					lock_word;
-	os_fast_mutex_t			os_fast_mutex;
-	ulint					waiters;	/*等待锁的线程个数*/
-	UT_LIST_NODE_T(mutex_t)	list;		/**/
-	os_thread_id_t			thread_id;	/*获得mutex的线程ID*/
-	/*mutex lock的位置*/
-	char*					file_name;
+	ulint					lock_word;		/*mutex原子控制变量*/
+	os_fast_mutex_t			os_fast_mutex;	/*在编译器或者系统部支持原子操作的时候采用的系统os_mutex来替代mutex*/
+	ulint					waiters;		/*是否有线程在等待锁*/
+	UT_LIST_NODE_T(mutex_t)	list;			/*mutex list node*/
+	os_thread_id_t			thread_id;		/*获得mutex的线程ID*/
+	
+	char*					file_name;		/*mutex lock的位置*/
 	ulint					line;
-	ulint					level;
-	/*mutex建立的位置*/
-	char*					cfile_name;
-	ulint					cline;
-	/*魔法字*/
-	ulint					magic_n;
+
+	ulint					level;			/*锁层ID*/
+
+	char*					cfile_name;		/*mute创建的位置*/
+	ulint					cline;		
+	
+	ulint					magic_n;		/*魔法字*/
 };
 
 #endif

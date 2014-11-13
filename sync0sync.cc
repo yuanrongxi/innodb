@@ -4,7 +4,6 @@
 #include "sev0srv.h"
 #include "buf0types.h"
 
-
 ulint	sync_dummy				= 0;
 ulint	mutex_system_call_count = 0;
 ulint	mutex_spin_wait_count	= 0;
@@ -162,7 +161,7 @@ UNIV_INLINE void mutex_exit(mutex_t* mutex)
 	if (mutex_get_waiters(mutex) != 0)
 		mutex_signal_object(mutex);
 
-	mutex_exit_count++;
+	mutex_exit_count ++;
 }
 
 UNIV_INLINE void mutex_enter_func(mutex_t* mutex, char* file_name, ulint line)
@@ -252,6 +251,22 @@ void mutex_free(mutex_t* mutex)
 #endif
 
 	mutex->magic_n = 0;
+}
+
+ulint mutex_enter_nowait(mutex_t*	mutex, char* file_name, ulint line)
+{
+	ut_ad(mutex_validate(mutex));
+	if (!mutex_test_and_set(mutex)){
+#ifdef UNIV_SYNC_DEBUG
+			mutex_set_debug_info(mutex, file_name, line);
+#endif
+		
+		mutex->file_name = file_name;
+		mutex->line = line;
+
+		return(0);
+	}
+	return(1);
 }
 
 /*魔法字校验，仅仅在DEBUG下使用*/
@@ -384,7 +399,7 @@ ibool mutex_own(mutex_t* mutex)
 		return TRUE;
 }
 
-voidmutex_list_print_info(void)
+void mutex_list_print_info(void)
 {
 #ifndef UNIV_SYNC_DEBUG
 #else
