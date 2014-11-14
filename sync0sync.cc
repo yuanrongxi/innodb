@@ -326,6 +326,9 @@ spin_loop:
 	if(i < SYNC_SPIN_ROUNDS) /*回到自旋的位子继续自旋等待*/
 		goto spin_loop;
 
+	/*sync_array_reserve_cell算一次系统调用*/
+	mutex_system_call_count++;
+
 	/*加入到array cell中*/
 	sync_array_reserve_cell(sync_primary_wait_array, mutex, SYNC_MUTEX, file_name, line, &index);
 

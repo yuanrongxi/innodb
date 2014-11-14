@@ -105,6 +105,9 @@
     <ClInclude Include="sync0arr.h">
       <Filter>sync</Filter>
     </ClInclude>
+    <ClInclude Include="sync0rw.h">
+      <Filter>sync</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -171,6 +174,9 @@
       <Filter>os</Filter>
     </ClCompile>
     <ClCompile Include="sync0arr.cc">
+      <Filter>sync</Filter>
+    </ClCompile>
+    <ClCompile Include="sync0rw.cc">
       <Filter>sync</Filter>
     </ClCompile>
   </ItemGroup>

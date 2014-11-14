@@ -88,6 +88,7 @@
     <ClInclude Include="os0thread.h" />
     <ClInclude Include="rem0types.h" />
     <ClInclude Include="sync0arr.h" />
+    <ClInclude Include="sync0rw.h" />
     <ClInclude Include="sync0sync.h" />
     <ClInclude Include="sync0types.h" />
     <ClInclude Include="thr0loc.h" />
@@ -114,6 +115,7 @@
     <ClCompile Include="os0sync.cc" />
     <ClCompile Include="os0thread.cc" />
     <ClCompile Include="sync0arr.cc" />
+    <ClCompile Include="sync0rw.cc" />
     <ClCompile Include="sync0sync.cc" />
     <ClCompile Include="thr0loc.cc" />
     <ClCompile Include="ul0crc32.cc" />
