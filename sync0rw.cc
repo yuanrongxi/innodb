@@ -243,7 +243,7 @@ UNIV_INLINE void rw_lock_x_unlock_func(rw_lock_t* lock,
 		rw_lock_set_writer(lock, RW_LOCK_NOT_LOCKED);
 
 #ifdef UNIV_SYNC_DEBUG
-	rw_lock_remove_debug_info(lock, pass, RW_LOCK_EX);
+	rw_lock_remove_debug_info(lock, pass, RW_LOCK_EX);	
 #endif
 
 	if(lock->waiters> 0 && lock->writer == 0){
@@ -456,7 +456,7 @@ UNIV_INLINE ulint rw_lock_x_lock_low(rw_lock_t* lock, ulint pass, char* file_nam
 		}
 	}
 	/*writer处于RW_LOCK_WAIT_EX状态，但是writer_thread是本线程（排在最前面触发）*/
-	else if((rw_lock_get_writer(lock) == RW_LOCK_WAIT_EX) && os_thread_seq(lock->writer_thread, os_thread_get_curr_id())){
+	else if((rw_lock_get_writer(lock) == RW_LOCK_WAIT_EX) && os_thread_eq(lock->writer_thread, os_thread_get_curr_id())){
 		if(rw_lock_get_reader_count(lock) == 0){ /*S-latch被释放，这时候可以获取成x-latch*/
 			rw_lock_set_writer(lock, RW_LOCK_EX);
 			lock->writer_count ++;
@@ -491,6 +491,327 @@ UNIV_INLINE ulint rw_lock_x_lock_low(rw_lock_t* lock, ulint pass, char* file_nam
 	return RW_LOCK_NOT_LOCKED;
 }
 
+void rw_lock_x_lock_func(rw_lock_t* lock, ulint pass, char* file_name, ulint line)
+{
+	ulint index;
+	ulint state;
+	ulint i;
+
+	ut_ad(&(lock->mutex));
+
+lock_loop:
+	mutex_enter_fast(&(lock->mutex));
+	/*尝试获得锁*/
+	state = rw_lock_x_lock_low(lock, pass, file_name, line);
+	if(state == RW_LOCK_EX)/*获得锁*/
+		return;
+	else{
+		i = 0;
+		/*自旋等待*/
+		while(rw_lock_get_writer(lock) != RW_LOCK_NOT_LOCKED && i < SYNC_SPIN_ROUNDS){
+			if(srv_spin_wait_delay)
+				ut_delay(ut_rnd_interval(0, srv_spin_wait_delay));
+			i ++;
+		}
+		if(i == SYNC_SPIN_ROUNDS)
+			os_thread_yield();/*返还CPU时间片*/
+		else{
+			i = 0;
+			ut_error;
+		}
+
+		if(srv_print_latch_waits){
+			printf("Thread %lu spin wait rw-x-lock at %lx cfile %s cline %lu rnds %lu\n",
+				os_thread_pf(os_thread_get_curr_id()), (ulint)lock,
+				lock->cfile_name, lock->cline, i);
+		}
+
+		rw_x_spin_wait_count ++;
+
+		/*从新判断是否可以获得锁*/
+		mutex_enter(rw_lock_get_mutex(lock));
+		if(state == RW_LOCK_EX){
+			mutex_exit(rw_lock_get_mutex(lock));
+			return ;
+		}
+
+		rw_x_system_call_count ++;
+		/*加入到一个thread cell中准备等待*/
+		sync_array_reserve_cell(sync_primary_wait_array, lock, RW_LOCK_EX, file_name, line, &index);
+		rw_lock_set_waiters(lock, 1);
+		mutex_exit(rw_lock_get_mutex(lock));
+
+		if (srv_print_latch_waits) {
+			printf("Thread %lu OS wait for rw-x-lock at %lx cfile %s cline %lu\n",
+				os_thread_pf(os_thread_get_curr_id()), (ulint)lock, lock->cfile_name, lock->cline);
+		}
+
+		rw_x_system_call_count++;
+		rw_x_os_wait_count++;
+		/*进行thread cell信号等待*/
+		sync_array_wait_event(sync_primary_wait_array, index);
+
+		goto lock_loop;
+	}
+}
+
+void rw_lock_debug_mutex_enter(void)
+{
+loop:
+	/*获得了rw_lock_debug_mutex*/
+	if (0 == mutex_enter_nowait(&rw_lock_debug_mutex, __FILE__, __LINE__)) {
+			return;
+	}
+
+	/*如果未获得，就进行等待获的rw_lock_debug_mutex的信号*/
+	os_event_reset(rw_lock_debug_event);
+	rw_lock_debug_waiters = TRUE;
+	/*在进入信号等待之前再尝试一次*/
+	if (0 == mutex_enter_nowait(&rw_lock_debug_mutex, __FILE__, __LINE__)) {
+			return;
+	}
+
+	/*进入信号等待*/
+	os_event_wait(rw_lock_debug_event);
+	/*有获得锁的机会信号到达，重新尝试获得锁*/
+	goto loop;
+}
+
+void rw_lock_debug_mutex_exit()
+{
+	mutex_exit(&rw_lock_debug_mutex);
+
+	if(rw_lock_debug_waiters){
+		rw_lock_debug_waiters = FALSE;
+		os_event_set(rw_lock_debug_event);
+	}
+}
+
+void rw_lock_add_debug_info(rw_lock_t* lock, ulint pass, ulint lock_type, char* file_name, ulint line)
+{
+	rw_lock_debug_t* info;
+	info = rw_lock_debug_create();
+
+	rw_lock_debug_mutex_enter();
+	info->file_name = file_name;
+	info->line = line;
+	info->lock_type = lock_type;
+	info->thread_id = os_thread_get_curr_id();
+	info->pass = pass;
+	UT_LIST_ADD_FIRST(list, lock->debug_list, info);
+	rw_lock_debug_mutex_exit();
+
+	if(pass == 0 && (lock_type != RW_LOCK_WAIT_EX))
+		sync_thread_add_level(lock, lock->level);
+}
+
+void rw_lock_remove_debug_info(rw_lock_t* lock, ulint pass, ulint lock_type)
+{
+	rw_lock_debug_t* info;
+
+	ut_ad(lock);
+	if(pass == 0 && lock_type != RW_LOCK_EX)
+		sync_thread_reset_level(lock);
+
+	rw_lock_debug_mutex_enter();
+	info = UT_LIST_GET_FIRST(lock->debug_list);
+	while(info != NULL){
+		if((pass == info->pass) && ((pass != 0) || os_thread_eq(info->thread_id, os_thread_get_curr_id()))
+			&& (info->lock_type == lock_type)){
+			UT_LIST_REMOVE(list, lock->debug_list, info);
+			rw_lock_debug_mutex_exit();
+
+			rw_lock_debug_free(info);
+			return ;
+		}
+		info = UT_LIST_GET_NEXT(list, info);
+	}
+	ut_error;
+}
+
+void rw_lock_set_level(rw_lock_t* lock, ulint level)
+{
+	lock->level = level;
+}
+
+/*查找本线程是否有已经获得指定类型的LATCH*/
+ibool rw_lock_own(rw_lock_t* lock, ulint lock_type)
+{
+	rw_lock_debug_t* info;
+	ut_ad(lock);
+	ut_ad(rw_lock_validate(lock));
+
+#ifdef UNIV_SYNC_DEBUG
+	ut_error;
+#endif
+
+	mutex_enter(&(lock->mutex));
+
+	info = UT_LIST_GET_FIRST(lock->debug_list);
+	while(info != NULL){
+		/*找到了匹配的latch*/
+		if(os_thread_eq(info->thread_id, os_thread_get_curr_id()) && info->pass == 0 && info->lock_type == lock_type){
+			mutex_exit(&(lock->mutex));
+			return TRUE;
+		}
+		info = UT_LIST_GET_NEXT(list, info);
+	}
+
+	mutex_exit(&(lock->mutex));
+	return FALSE;
+}
+/*判断rw_lock是否处于lock状态中，其中包括S-latch和X-latch状态*/
+ibool rw_lock_is_locked(rw_lock_t* lock, ulint lock_type)
+{
+	ibool ret = FALSE;
+	ut_ad(lock);
+	ut_ad(rw_lock_validate(lock));
+
+	mutex_enter(&(lock->mutex));
+
+	if(lock_type == RW_LOCK_SHARED){
+		if(lock->reader_count > 0)
+			ret = TRUE;
+	}
+	else if(lock_type == RW_LOCK_EX){
+		if(lock->writer == RW_LOCK_EX)
+			ret = TRUE;
+	}
+	else
+		ut_error;
+
+	mutex_exit(&(lock->mutex));
+
+	return ret;
+}
+
+/*打印处于非not locked状态下的rw_lock的状态信息*/
+void rw_lock_list_print_info(void)
+{
+#ifndef UNIV_SYNC_DEBUG
+#else
+	rw_lock_t*	lock;
+	ulint		count		= 0;
+	rw_lock_debug_t* info;
+
+	mutex_enter(&rw_lock_list_mutex);
+
+	printf("-------------\n");
+	printf("RW-LATCH INFO\n");
+	printf("-------------\n");
+
+	lock = UT_LIST_GET_FIRST(rw_lock_list);
+
+	while (lock != NULL) {
+
+		count++;
+
+		mutex_enter(&(lock->mutex));
+
+		if ((rw_lock_get_writer(lock) != RW_LOCK_NOT_LOCKED)
+			|| (rw_lock_get_reader_count(lock) != 0)
+			|| (rw_lock_get_waiters(lock) != 0)) {
+
+				printf("RW-LOCK: %lx ", (ulint)lock);
+
+				if (rw_lock_get_waiters(lock)) {
+					printf(" Waiters for the lock exist\n");
+				} else {
+					printf("\n");
+				}
+
+				info = UT_LIST_GET_FIRST(lock->debug_list);
+				while (info != NULL) {	
+					rw_lock_debug_print(info);
+					info = UT_LIST_GET_NEXT(list, info);
+				}
+		}
+
+		mutex_exit(&(lock->mutex));
+		lock = UT_LIST_GET_NEXT(list, lock);
+	}
+
+	printf("Total number of rw-locks %ld\n", count);
+	mutex_exit(&rw_lock_list_mutex);
+#endif
+}
+
+void rw_lock_print(rw_lock_t* lock)	
+{
+#ifndef UNIV_SYNC_DEBUG
+	printf("Sorry, cannot give rw-lock info in non-debug version!\n");
+#else
+	ulint count		= 0;
+	rw_lock_debug_t* info;
+
+	printf("-------------\n");
+	printf("RW-LATCH INFO\n");
+	printf("RW-LATCH: %lx ", (ulint)lock);
+
+	if ((rw_lock_get_writer(lock) != RW_LOCK_NOT_LOCKED)
+		|| (rw_lock_get_reader_count(lock) != 0)
+		|| (rw_lock_get_waiters(lock) != 0)) {
+
+			if (rw_lock_get_waiters(lock)) {
+				printf(" Waiters for the lock exist\n");
+			} else {
+				printf("\n");
+			}
+
+			info = UT_LIST_GET_FIRST(lock->debug_list);
+			while (info != NULL) {	
+				rw_lock_debug_print(info);
+				info = UT_LIST_GET_NEXT(list, info);
+			}
+	}
+#endif
+}
+
+void rw_lock_debug_print(rw_lock_debug_t* info)
+{
+	ulint rwt = info->lock_type;	
+
+	/*打印info中lock type和pass的值*/
+	printf("Locked: thread %ld file %s line %ld  ", os_thread_pf(info->thread_id), info->file_name, info->line);
+	if (rwt == RW_LOCK_SHARED) {
+		printf("S-LOCK");
+	} else if (rwt == RW_LOCK_EX) {
+		printf("X-LOCK");
+	} else if (rwt == RW_LOCK_WAIT_EX) {
+		printf("WAIT X-LOCK");
+	} else {
+		ut_error;
+	}
+	if (info->pass != 0) {
+		printf(" pass value %lu", info->pass);
+	}
+	printf("\n");
+}
+
+/*检查多少个rw_lock处于非空闲状态*/
+ulint rw_lock_n_locked()
+{
+#ifndef UNIV_SYNC_DEBUG
+	printf("Sorry, cannot give rw-lock info in non-debug version!\n");
+	ut_error;
+	return(0);
+#else
+	rw_lock_t* lock;
+	ulint count = 0;
+	mutex_enter(&rw_lock_list_mutex);
+	lock = UT_LIST_GET_FIRST(rw_lock_list);
+	while(lock != NULL){
+		mutex_enter(rw_lock_get_mutex(lock));
+		if((rw_lock_get_writer(lock) != RW_LOCK_NOT_LOCKED) || (rw_lock_get_reader_count(lock) != 0))
+			count ++;
+
+		mutex_exit(rw_lock_get_mutex(lock));
+		lock = UT_LIST_GET_NEXT(list, lock);
+	}
+	mutex_exit(&rw_lock_list_mutex);
+	return count;
+#endif
+}
 
 
 

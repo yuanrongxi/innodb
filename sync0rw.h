@@ -135,13 +135,14 @@ void					rw_lock_debug_print(rw_lock_debug_t* info);
 /*rw_lock_t的定义*/
 struct rw_lock_struct
 {
-	ulint				reader_count;	/*获得S-LATCH的读者个数*/
-	ulint				writer;			/*获得X-LATCH的状态，主要有RW_LOCK_EX、RW_LOCK_WAIT_EX、RW_LOCK_NOT_LOCKED*/
-	os_thread_id_t		writer_thread;	/*获得X-LATCH的线程ID*/
+	ulint				reader_count;	/*获得S-LATCH的读者个数,一旦不为0，表示是S-LATCH锁*/
+	ulint				writer;			/*获得X-LATCH的状态，主要有RW_LOCK_EX、RW_LOCK_WAIT_EX、RW_LOCK_NOT_LOCKED，
+										处于RW_LOCK_EX表示是一个x-latch锁,RW_LOCK_WAIT_EX的状态表示是一个S-LATCH锁*/
+	os_thread_id_t		writer_thread;	/*获得X-LATCH的线程ID或者第一个等待成为x-latch的线程ID*/
 	ulint				writer_count;	/*同一线程中X-latch lock次数*/
 	
-	mutex_t				mutex;
-	ulint				pass;
+	mutex_t				mutex;			/*保护rw_lock结构中数据的互斥量*/
+	ulint				pass;			/*默认为0，如果是非0，表示线程可以将latch控制权转移给其他线程，在insert buffer有相关的调用*/
 
 	ulint				waiters;		/*有读或者写在等待获得latch*/
 	ibool				writer_is_wait_ex;
@@ -149,18 +150,19 @@ struct rw_lock_struct
 	UT_LIST_NODE_T(rw_lock_t) list;
 	UT_LIST_BASE_NODE_T(rw_lock_debug_t) debug_list;
 
-	ulint				level;
+
+	ulint				level;				/*level标示，用于检测死锁*/
 
 	/*用于调试的信息*/
-	char*				cfile_name; /*rw_lock创建时的文件*/
-	ulint				cline;		/*rw_lock创建是的文件行位置*/
+	char*				cfile_name;			/*rw_lock创建时的文件*/
+	ulint				cline;				/*rw_lock创建是的文件行位置*/
 
-	char*				last_s_file_name; /**/
-	char*				last_x_file_name;
-	ulint				last_s_line;
-	ulint				last_x_line;
+	char*				last_s_file_name;	/*最后获得S-latch时的文件*/
+	char*				last_x_file_name;	/*最后获得X-latch时的文件*/
+	ulint				last_s_line;		/*最后获得S-latch时的文件行位置*/
+	ulint				last_x_line;		/*最后获得X-latch时的文件行位置*/
 
-	ulint				magic_n;	/*魔法字*/
+	ulint				magic_n;			/*魔法字*/
 };
 
 struct rw_lock_debug_struct

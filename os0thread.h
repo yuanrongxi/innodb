@@ -24,7 +24,7 @@ typedef os_thread_t	os_thread_id_t;
 
 typedef void* (*os_posix_f_t)(void*);
 
-ibool			os_thread_seq(os_thread_id_t a, os_thread_id_t b);
+ibool			os_thread_eq(os_thread_id_t a, os_thread_id_t b);
 ulint			os_thread_pf(os_thread_id_t a);
 
 os_thread_t		os_thread_create(
