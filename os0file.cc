@@ -516,8 +516,161 @@ static os_aio_array_t* os_aio_array_create(ulint n, ulint n_segments)
 
 	array = ut_malloc(sizeof(os_aio_array_t));
 	array->mutex = os_mutex_create(NULL);
-	array->not_full = os_cra
+	array->not_full = os_event_create(NULL);
+	array->is_empty = os_event_create(NULL);
+
+	os_event_set(array->is_empty);
+
+	array->n_slots  	= n;
+	array->n_segments	= n_segments;
+	array->n_reserved	= 0;
+	array->slots		= ut_malloc(n * sizeof(os_aio_slot_t));
+	array->events		= ut_malloc(n * sizeof(os_event_t));
+
+	for(i = 0; i < n; i ++){
+		slot = os_aio_array_get_nth_slot(array, i);
+		slot->pos = i;
+		slot->reserved = FALSE;
+	}
+
+	return array;
 }
+
+/*对aio的初始化*/
+void os_aio_init(ulint n, ulint n_segments, ulint n_slots_sync)
+{
+	ulint	n_read_segs;
+	ulint	n_write_segs;
+	ulint	n_per_seg;
+	ulint	i;
+
+#ifdef POSIX_ASYNC_IO
+	sigset_t sigset;
+#endif
+
+	ut_ad(n % n_segments == 0);
+	ut_ad(n_segments >= 4);
+
+	os_io_init_simple();
+
+	/*计算读写的n和segment，对半分，预留2个给ibuf、log*/
+	n_per_seg = n / n_segments;			 /*每个segment站slots的个数*/
+	n_write_segs = (n_segments - 2) / 2;
+	n_read_segs = n_segments - 2 - n_write_segs;
+
+	os_aio_read_array = os_aio_array_create(n_read_segs * n_per_seg, n_read_segs);
+	os_aio_write_array = os_aio_array_create(n_write_segs * n_per_seg, n_write_segs);
+	os_aio_ibuf_array = os_aio_array_create(n_per_seg, 1);
+	os_aio_log_array = os_aio_array_create(n_per_seg, 1);
+	os_aio_sync_array = os_aio_array_create(n_slots_sync, 1);
+
+	os_aio_n_segments = n_segments;
+
+	os_aio_segment_wait_events = ut_malloc(n_segments * sizeof(void *));
+	for(i = 0; i < n_segments; i ++){ /*一个segment对应一个os_event_t*/
+		os_aio_segment_wait_events[i] = os_event_create(NULL);
+	}
+
+	os_last_printout = time(NULL);
+
+#ifdef POSIX_ASYNC_IO
+	sigemptyset(&sigset);
+	sigaddset(&sigset, SIGRTMIN + 1 + 0);
+	sigaddset(&sigset, SIGRTMIN + 1 + 1);
+	sigaddset(&sigset, SIGRTMIN + 1 + 2);
+	sigaddset(&sigset, SIGRTMIN + 1 + 3);
+
+	pthread_sigmask(SIG_BLOCK, &sigset, NULL);
+#endif
+}
+
+void os_aio_wait_until_no_pending_writes()
+{
+	os_event_wait(os_aio_write_array->is_empty);
+}
+
+/*定位slot的segment序号*/
+static ulint os_aio_get_segment_no_from_slot(os_aio_array_t* array, os_aio_slot_t* slot)
+{
+	ulint segment = -1;
+	ulint seg_len;
+
+	if(array == os_aio_ibuf_array)
+		segment = 0;
+	else if(array == os_aio_log_array)
+		segment = 1;
+	else if(array == os_aio_read_array){
+		seg_len = os_aio_read_array->n_slots / os_aio_read_array->n_segments;
+		segment = 2 + slot->pos / seg_len; /*计算当前使用的最后一个pos的segment*/
+	}
+	else if(array == os_aio_write_array){
+		seg_len = os_aio_write_array->n_slots / os_aio_write_array->n_segments;
+		segment = os_aio_read_array->n_segments + 2 + slot->pos / seg_len;
+	}
+
+	return segment;
+}
+
+/*通过segment序号找到对应的aio_array*/
+static ulint os_aio_get_array_and_local_segment(os_aio_array_t** array, ulint global_segment)
+{
+	ulint segment;
+
+	ut_a(global_segment < os_aio_n_segments);
+	if(global_segment == 0){
+		*array = os_aio_ibuf_array;
+		segment = 0;
+	}
+	else if(global_segment == 1){
+		*array = os_aio_log_array;
+		segment = 0;
+	}
+	else if(global_segment < os_aio_read_array->n_segments + 2){ /*处在读范围*/
+		*array = os_aio_read_array;
+		segment = global_segment - 2;
+	}
+	else{
+		*array = os_aio_write_array;
+		segment = global_segment - (os_aio_read_array->n_segments + 2);
+	}
+
+	return segment;
+}
+
+static ulint os_aio_get_array_no(os_aio_array_t* array)
+{	
+	if (array == os_aio_ibuf_array)
+		return(0);
+	else if (array == os_aio_log_array)
+		return(1);
+	else if (array == os_aio_read_array)
+		return(2);
+	else if (array == os_aio_write_array)
+		return(3);
+	else{
+		ut_a(0);
+		return(0);
+	}
+}
+
+static os_aio_array_t* os_aio_get_array_from_no(ulint n)
+{	
+	if (n == 0)
+		return(os_aio_ibuf_array);
+	else if (n == 1)
+		return(os_aio_log_array);
+	else if (n == 2)
+		return(os_aio_read_array);
+	else if (n == 3)
+		return(os_aio_write_array);
+	else {
+		ut_a(0);
+		return(NULL);
+	}
+}
+
+
+
 
 
 

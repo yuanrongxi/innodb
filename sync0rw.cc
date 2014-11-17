@@ -786,7 +786,7 @@ void rw_lock_debug_print(rw_lock_debug_t* info)
 		printf(" pass value %lu", info->pass);
 	}
 	printf("\n");
-}
+}  
 
 /*检查多少个rw_lock处于非空闲状态*/
 ulint rw_lock_n_locked()
