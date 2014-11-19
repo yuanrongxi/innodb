@@ -31,7 +31,7 @@ typedef struct os_aio_slot_struct
 	ibool			reserved;			/*这个slot是否被占用了*/
 	ulint			len;				/*读写的块长度*/
 
-	byte*			buf;				/**/
+	byte*			buf;				/*需要操作的数据缓冲区*/
 	ulint			type;				/*操作类型：OS_FILE_READ OS_FILE_WRITE*/
 	ulint			offset;				/*当前操作文件偏移位置，低32位*/
 	ulint			offset_high;		/*当前操作文件偏移位置，高32位*/
@@ -59,7 +59,7 @@ typedef struct os_aio_array_struct
 	ulint			n_reserved; /*被占用的slots个数*/
 	os_aio_slot_t*	slots;		/*slots数组*/
 
-	os_event_t*		event;		/*slots event array*/
+	os_event_t*		events;		/*slots event array*/
 }os_aio_array_t;
 
 os_event_t* os_aio_segment_wait_events = NULL;
@@ -128,8 +128,8 @@ ulint os_file_get_last_error()
 #ifdef POSIX_ASYNC_IO
 	else if (err == EAGAIN) {
 		return OS_FILE_AIO_RESOURCES_RESERVED;
-#endif
 	}
+#endif
 	else if(err == EAGAIN)
 		return OS_FILE_AIO_RESOURCES_RESERVED;
 	else if(err == ENOENT)
@@ -668,6 +668,667 @@ static os_aio_array_t* os_aio_get_array_from_no(ulint n)
 		return(NULL);
 	}
 }
+
+static os_aio_slot_t* os_aio_array_reserve_slot(ulint type, os_aio_array_t* array, void* message1, void* message2, 
+						os_file_t file, char* name, void* buf, ulint offset, ulint offset_high, ulint len)
+{
+	os_aio_slot_t* slot;
+	ulint i;
+
+loop:
+	os_mutex_enter(array->mutex);
+	/*array slots无空闲单元*/
+	if(array->n_reserved == array->n_slots){
+		os_mutex_enter(array->mutex);
+		
+		if(!os_aio_use_native_aio)
+			os_aio_simulated_wake_handler_threads();
+
+		/*等待一个有空闲的信号*/
+		os_event_wait(array->not_full);
+
+		goto loop;
+	}
+
+	/*获得一个空闲的slot*/
+	for(i = 0; ; i++){
+		slot = os_aio_array_get_nth_slot(array, i);
+		if(!slot->reserved)
+			break;
+	}
+
+	array->n_reserved ++;
+	/*复位空信号*/
+	if(array->n_reserved == 1)
+		os_event_reset(array->is_empty);
+	/*复位满信号*/
+	if(array->n_reserved == array->n_slots)
+		os_event_reset(array->not_full);
+
+	slot->reserved = TRUE;
+	slot->message1 = message1;
+	slot->message2 = message2;
+	slot->file     = file;
+	slot->name     = name;
+	slot->len      = len;
+	slot->type     = type;
+	slot->buf      = buf;
+	slot->offset   = offset;
+	slot->offset_high = offset_high;
+	slot->io_already_done = FALSE;
+
+#ifdef POSIX_ASYNC_IO
+	control = &(slot->control);
+	control->aio_fildes = file;
+	control->aio_buf = buf;
+	control->aio_nbytes = len;
+	control->aio_offset = offset;
+	control->aio_reqprio = 0;
+	control->aio_sigevent.sigev_notify = SIGEV_SIGNAL;
+	control->aio_sigevent.sigev_signo = SIGRTMIN + 1 + os_aio_get_array_no(array);
+
+	control->aio_sigevent.sigev_value.sival_ptr = slot;
+#endif
+	os_mutex_exit(array->mutex);
+
+	return slot;
+}
+
+static void os_aio_array_free_slot(os_aio_array_t* array, os_aio_slot_t* slot)
+{
+	ut_ad(array);
+	ut_ad(slot);
+
+	os_mutex_enter(array->mutex);
+	ut_ad(slot->reserved);
+
+	slot->reserved = FALSE;
+	array->n_reserved--;
+
+	/*发送空闲信号*/
+	if(array->n_reserved == array->n_slots - 1)
+		os_event_set(array->not_full);
+
+	/*发送一个empty event*/
+	if(array->n_reserved == 0)
+		os_event_set(array->is_empty);
+
+	os_mutex_exit(array->mutex);
+}
+
+/*唤醒一个模拟aio操作线程*/
+static void os_aio_simulated_wake_handler_thread(ulint global_segment)
+{
+	os_aio_array_t*	array;
+	os_aio_slot_t*	slot;
+	ulint		segment;
+	ulint		n;
+	ulint		i;
+
+	ut_ad(!os_aio_use_native_aio);
+
+	/*获得global_segment对应的array和所处的segment*/
+	segment = os_aio_get_array_and_local_segment(&array, global_segment);
+	/*计算单个segment对应的slots数量*/
+	n = array->n_slots / array->n_segments;
+
+	os_mutex_enter(array->mutex);
+	for(i = 0; i < n; i++){
+		slot = os_aio_array_get_nth_slot(array, i + segment * n);
+		if(slot->reserved) /*检查是否有slot需要操作*/
+			break;
+	}
+	os_mutex_exit(array->mutex);
+
+	if(i < n)
+		os_event_set(os_aio_segment_wait_events[global_segment]);
+}
+
+void os_aio_simulated_wake_handler_threads()
+{
+	ulint i;
+	
+	if(os_aio_use_native_aio)
+		return;
+
+	os_aio_recommend_sleep_for_read_threads = FALSE;
+	for(i = 0; i < os_aio_n_segments; i ++){
+		os_aio_simulated_wake_handler_thread(i);
+	}
+}
+
+void os_aio_simulated_put_read_threads_to_sleep()
+{
+	os_aio_array_t* array;
+	ulint g;
+
+	os_aio_recommend_sleep_for_read_threads = TRUE;
+
+	for(g = 0; g < os_aio_n_segments; g++){
+		os_aio_get_array_and_local_segment(array, g);
+		if(array == os_aio_read_array) /*如果是读slots，将读置为event waiting状态*/
+			os_event_reset(os_aio_segment_wait_events[g]);
+	}
+}
+
+ibool os_aio(ulint type, ulint mode, char* name, os_file_t file, void* buf, ulint offset, ulint offset_high, 
+	ulint n, void* message1, void* message2)
+{
+	ulint		err	= 0;
+	ibool		retry;
+	ulint		wake_later;
+
+	ut_ad(file);
+	ut_ad(buf);
+	ut_ad(n > 0);
+	ut_ad(n % OS_FILE_LOG_BLOCK_SIZE == 0);
+	ut_ad(offset % OS_FILE_LOG_BLOCK_SIZE == 0);
+	ut_ad(os_aio_validate());
+
+	wake_later = mode & OS_AIO_SIMULATED_WAKE_LATER;
+	mode = mode &(~OS_AIO_SIMULATED_WAKE_LATER);
+
+	/*同步IO模式*/
+	if(mode == OS_AIO_SYNC){
+		if(type == OS_FILE_READ) /*是读操作，读取文件内容*/
+			return os_file_read(file, buf, offset, offset_high, n);
+		else{ /*进行写入*/
+			ut_a(type == OS_FILE_WRITE);
+			return os_file_write(name, file, buf, offset, offset_high, n);
+		}
+	}
+
+try_again:
+	if(mode == OS_AIO_NORMAL){
+		if(type == OS_FILE_READ)
+			array = os_aio_read_array;
+		else 
+			array = os_aio_write_array;
+	}
+	else if(mode == OS_AIO_IBUF){
+		ut_ad(type == OS_FILE_READ);
+
+		/* Reduce probability of deadlock bugs in connection with ibuf: do not let the ibuf i/o handler sleep */
+		wake_later = FALSE;
+		array = os_aio_ibuf_array;
+	}
+	else if(mode == OS_AIO_LOG)
+		array = os_aio_log_array;
+	else if(mode == OS_AIO_SYNC)
+		array = os_aio_sync_array;
+	else{
+		array = NULL;
+		ut_error;
+	}
+
+	slot = os_aio_array_reserve_slot(type, array, message1, message2, file, name, buf, offset, offset_high, n);
+	if(type == OS_FILE_READ){
+		if (os_aio_use_native_aio){
+#ifdef POSIX_ASYNC_IO
+			slot->control.aio_lio_opcode = LIO_READ;
+			err = (ulint) aio_read(&(slot->control));
+			printf("Starting Posix aio read %lu\n", err);
+#endif
+		}
+		else{
+			if(!wake_later) /*立即唤醒操作线程*/
+				os_aio_simulated_wake_handler_thread(os_aio_get_segment_no_from_slot(array, slot));
+		}
+	}
+	else if(type == OS_FILE_WRITE){ /*写操作*/
+		if (os_aio_use_native_aio){
+#ifdef POSIX_ASYNC_IO
+			slot->control.aio_lio_opcode = LIO_WRITE;
+			err = (ulint) aio_write(&(slot->control));
+			printf("Starting Posix aio write %lu\n", err);
+#endif
+		}
+		else{
+			if(!wake_later)
+				os_aio_simulated_wake_handler_thread(os_aio_get_segment_no_from_slot(array, slot));
+		}
+	}
+	else{
+		ut_error;
+	}
+
+	if(err == 0)
+		return TRUE;
+
+	/*操作失败，先回退设置的slot,再进行重试*/
+	os_aio_array_free_slot(array, slot);
+
+	retry = os_file_handle_error(file, name);
+	if(retry)
+		goto try_again;
+
+	ut_error;
+
+	return FALSE;
+}
+
+#ifdef POSIX_ASYNC_IO
+ibool os_aio_posix_hadle(ulint array_no, void** message1, void** message2)
+{
+	os_aio_array_t*	array;
+	os_aio_slot_t*	slot;
+
+	siginfo_t		info;
+	sigset_t		sigset;
+	sigset_t        proc_sigset;
+	sigset_t        thr_sigset;
+
+	int				ret;
+	int             i;
+	int             sig;
+
+	sigemptyset(&sigset);
+	sigaddset(&sigset, SIGRTMIN + 1 + array_no);
+
+	pthread_sigmask(SIG_UNBLOCK, &sigset, NULL);
+
+	ret = sigwaitinfo(&sigset, &info);
+	if(sig != SIGRTMIN + 1 + array_no){
+		ut_a(0);
+		return FALSE;
+	}
+
+	printf("Handling Posix aio\n");
+	array = os_aio_get_array_from_no(array_no);
+
+	os_mutex_enter(array->mutex);
+	slot = info.si_value.sival_ptr;
+	ut_a(slot->reserved);
+	*message1 = slot->message1;
+	*message2 = slot->message2;
+
+	if(slot->type == OS_FILE_WRITE && !os_do_not_call_flush_at_each_write)
+		ut_a(TRUE == os_file_flush(slot->file));
+
+	os_mutex_exit(array->mutex);
+	os_aio_array_free_slot(array, slot);
+
+	return TRUE;
+}
+#endif
+
+/*模拟aio的方法*/
+ibool os_aio_simulated_handle(ulint global_segment, void** message1, void** message2, ulint type)
+{
+	os_aio_array_t*	array;
+	ulint		segment;
+	os_aio_slot_t*	slot;
+	os_aio_slot_t*	slot2;
+	os_aio_slot_t*	consecutive_ios[OS_AIO_MERGE_N_CONSECUTIVE];
+	ulint		n_consecutive;
+	ulint		total_len;
+	ulint		offs;
+	ulint		lowest_offset;
+	byte*		combined_buf;
+	byte*		combined_buf2;
+	ibool		ret;
+	ulint		n;
+	ulint		i;
+	ulint		len2;
+
+	segment = os_aio_get_array_and_local_segment(&array, global_segment);
+
+restart:
+	ut_ad(os_aio_validate());
+	ut_ad(segment < array->n_segments);
+	
+	if(array == os_aio_read_array && os_aio_recommend_sleep_for_read_threads){
+		goto recommended_sleep;
+	}
+
+	os_mutex_enter(array->mutex);
+	for(i = 0; i < n; i ++){
+		slot = os_aio_array_get_nth_slot(array, i + segment * n);
+		if(slot->reserved && slot->io_already_done){
+			if (os_aio_print_debug) 
+				fprintf(stderr,"InnoDB: i/o for slot %lu already done, returning\n", i);
+
+			ret = TRUE;
+
+			goto slot_io_done;
+		}
+	}
+
+	n_consecutive = 0;
+	lowest_offset = ULINT_MAX;
+
+	for(i = 0; i < n; i ++){
+		slot = os_aio_array_get_nth_slot(array, i + segment * n);
+		/*连续数据的判断*/
+		if(slot->reserved && slot->offset < lowest_offset){
+			consecutive_ios[0] = slot;
+			n_consecutive = 1;
+			lowest_offset = slot->offset;
+		}
+	}
+
+	if(n_consecutive == 0)
+		goto wait_for_io;
+
+consecutive_loop:
+	for(i = 0; i < n; i ++){
+		slot2 = os_aio_array_get_nth_slot(array, i + segment * n);
+		/*进行操作合并*/
+		if (slot2->reserved && slot2 != slot
+		    && slot2->offset == slot->offset + slot->len
+		    && slot->offset + slot->len > slot->offset /* check that sum does not wrap over */
+		    && slot2->offset_high == slot->offset_high
+		    && slot2->type == slot->type
+		    && slot2->file == slot->file){
+				consecutive_ios[n_consecutive] = slot2;
+				n_consecutive++;
+				slot = slot2;
+
+				/*没有凑齐64个操作*/
+				if(n_consecutive < OS_AIO_MERGE_N_CONSECUTIVE)
+					goto consecutive_loop;
+				else 
+					break;
+		} 
+	}
+
+	total_len = 0;
+	slot = consecutive_ios[0];
+
+	for (i = 0; i < n_consecutive; i++) {
+		total_len += consecutive_ios[i]->len;
+	}
+
+	if(n_consecutive == 1)
+		combined_buf = slot->buf;
+	else{
+		combined_buf2 = ut_malloc(total_len + UNIV_PAGE_SIZE);
+		ut_a(combined_buf2);
+		combined_buf = ut_align(combined_buf2, UNIV_PAGE_SIZE);
+	}
+
+	os_mutex_exit(array->mutex);
+	/*连续数据的合并*/
+	for(slot->type == OS_FILE_WRITE && n_consecutive > 1){
+		offs = 0;
+		for (i = 0; i < n_consecutive; i++) {
+			ut_memcpy(combined_buf + offs, consecutive_ios[i]->buf, consecutive_ios[i]->len);
+			offs += consecutive_ios[i]->len;
+		}
+	}
+
+	srv_io_thread_op_info[global_segment] = (char*) "doing file i/o";
+
+	if (os_aio_print_debug) {
+		fprintf(stderr, "InnoDB: doing i/o of type %lu at offset %lu %lu, length %lu\n",
+			slot->type, slot->offset_high, slot->offset, total_len);
+	}
+
+	if(slot->type == OS_FILE_WRITE){
+		if(array == os_aio_write_array){
+			for(len2 = 0; len2 + UNIV_PAGE_SIZE <= total_len; len2 += UNIV_PAGE_SIZE){
+				if (mach_read_from_4(combined_buf + len2 + FIL_PAGE_LSN + 4)!= mach_read_from_4(combined_buf + len2 + UNIV_PAGE_SIZE - FIL_PAGE_END_LSN + 4)){
+					ut_print_timestamp(stderr);
+					fprintf(stderr,"  InnoDB: ERROR: The page to be written seems corrupt!\n");
+					buf_page_print(combined_buf + len2);
+
+					fprintf(stderr, "InnoDB: ERROR: The page to be written seems corrupt!\n");
+				}
+			}
+		}
+
+		/*进行数据写入*/
+		ret = os_file_write(slot->name, slot->file, combined_buf, slot->offset, slot->offset_high, total_len);
+	}
+	else{ /*对数据进行读*/
+		ret = os_file_read(slot->file, combined_buf, slot->offset, slot->offset_high, total_len);
+	}
+
+	ut_a(ret);
+	srv_io_thread_op_info[global_segment] = (char*) "file i/o done";
+
+	os_mutex_enter(array->mutex);
+
+	/*设置操作完成标识*/
+	for(i = 0; i < n_consecutive; i++){
+		consecutive_ios[i]->io_already_done = TRUE;
+	}
+
+slot_io_done:
+	ut_a(slot->reserved);
+
+	*message1 = slot->message1;
+	*message2 = slot->message2;
+	*type = slot->type;
+
+	os_mutex_exit(array->mutex);
+	os_aio_array_free_slot(array, slot);
+
+	return(ret);
+
+wait_for_io:
+	/*进行i.o操作的信号*/
+	os_event_reset(os_aio_segment_wait_events[global_segment]);
+	os_mutex_exit(array->mutex);
+
+recommended_sleep:
+	srv_io_thread_op_info[global_segment] = (char*)"waiting for i/o request";
+
+	os_event_wait(os_aio_segment_wait_events[global_segment]);
+	if(os_aio_print_debug){
+		fprintf(stderr, "InnoDB: i/o handler thread for i/o segment %lu wakes up\n", global_segment);
+	}
+
+	goto restart;
+}
+
+static ibool os_aio_array_validate(os_aio_array_t* array)
+{
+	os_aio_slot_t*	slot;
+	ulint			n_reserved	= 0;
+	ulint			i;
+
+	ut_a(array);
+
+	os_mutex_enter(array->mutex);
+
+	ut_a(array->n_slots > 0);
+	ut_a(array->n_segments > 0);
+
+	for(i = 0; i < array->n_slots; i ++){
+		slot = os_aio_array_get_nth_slot(array, i);
+		if (slot->reserved) {
+			n_reserved++;
+			ut_a(slot->len > 0);
+		}
+	}
+
+	/*合法性校验*/
+	ut_a(array->n_reserved == n_reserved);
+	os_mutex_exit(array->mutex);
+
+	return TRUE;
+}
+
+ibool os_aio_validate()
+{
+	os_aio_array_validate(os_aio_read_array);
+	os_aio_array_validate(os_aio_write_array);
+	os_aio_array_validate(os_aio_ibuf_array);
+	os_aio_array_validate(os_aio_log_array);
+	os_aio_array_validate(os_aio_sync_array);
+
+	return(TRUE);
+}
+
+/*打印函数，用于查看状态，show innodb status \G;*/
+void os_aio_print(char* buf, char* buf_end)
+{
+	os_aio_array_t*	array;
+	os_aio_slot_t*	slot;
+	ulint		n_reserved;
+	time_t		current_time;
+	double		time_elapsed;
+	double		avg_bytes_read;
+	ulint		i;
+
+	if (buf_end - buf < 1000) {
+
+		return;
+	}
+
+	for (i = 0; i < srv_n_file_io_threads; i++) {
+		buf += sprintf(buf, "I/O thread %lu state: %s\n", i,
+					srv_io_thread_op_info[i]);
+	}
+
+	buf += sprintf(buf, "Pending normal aio reads:");
+
+	array = os_aio_read_array;
+loop:
+	ut_a(array);
+	
+	os_mutex_enter(array->mutex);
+
+	ut_a(array->n_slots > 0);
+	ut_a(array->n_segments > 0);
+	
+	n_reserved = 0;
+
+	for (i = 0; i < array->n_slots; i++) {
+		slot = os_aio_array_get_nth_slot(array, i);
+	
+		if (slot->reserved) {
+			n_reserved++;
+			ut_a(slot->len > 0);
+		}
+	}
+
+	ut_a(array->n_reserved == n_reserved);
+	buf += sprintf(buf, " %lu", n_reserved);
+	
+	os_mutex_exit(array->mutex);
+
+	if (array == os_aio_read_array) {
+		buf += sprintf(buf, ", aio writes:");
+	
+		array = os_aio_write_array;
+
+		goto loop;
+	}
+
+	if (array == os_aio_write_array) {
+		buf += sprintf(buf, ",\n ibuf aio reads:");
+		array = os_aio_ibuf_array;
+
+		goto loop;
+	}
+
+	if (array == os_aio_ibuf_array) {
+		buf += sprintf(buf, ", log i/o's:");
+		array = os_aio_log_array;
+
+		goto loop;
+	}
+
+	if (array == os_aio_log_array) {
+		buf += sprintf(buf, ", sync i/o's:");		
+		array = os_aio_sync_array;
+
+		goto loop;
+	}
+
+	buf += sprintf(buf, "\n");
+	
+	current_time = time(NULL);
+	time_elapsed = 0.001 + difftime(current_time, os_last_printout);
+
+	buf += sprintf(buf,
+		"Pending flushes (fsync) log: %lu; buffer pool: %lu\n",
+	       fil_n_pending_log_flushes, fil_n_pending_tablespace_flushes);
+	buf += sprintf(buf,
+		"%lu OS file reads, %lu OS file writes, %lu OS fsyncs\n",
+		os_n_file_reads, os_n_file_writes, os_n_fsyncs);
+
+	if (os_n_file_reads == os_n_file_reads_old) {
+		avg_bytes_read = 0.0;
+	} else {
+		avg_bytes_read = os_bytes_read_since_printout /
+				(os_n_file_reads - os_n_file_reads_old);
+	}
+
+	buf += sprintf(buf,
+"%.2f reads/s, %lu avg bytes/read, %.2f writes/s, %.2f fsyncs/s\n",
+		(os_n_file_reads - os_n_file_reads_old)
+		/ time_elapsed,
+		(ulint)avg_bytes_read,
+		(os_n_file_writes - os_n_file_writes_old)
+		/ time_elapsed,
+		(os_n_fsyncs - os_n_fsyncs_old)
+		/ time_elapsed);
+
+	os_n_file_reads_old = os_n_file_reads;
+	os_n_file_writes_old = os_n_file_writes;
+	os_n_fsyncs_old = os_n_fsyncs;
+	os_bytes_read_since_printout = 0;
+	
+	os_last_printout = current_time;
+}
+
+void os_aio_refresh_stats()
+{
+	os_n_file_reads_old = os_n_file_reads;
+	os_n_file_writes_old = os_n_file_writes;
+	os_n_fsyncs_old = os_n_fsyncs;
+	os_bytes_read_since_printout = 0;
+
+	os_last_printout = time(NULL);
+}
+
+/*判断所有的array slots是否是空的*/
+ibool os_aio_slots_free()
+{
+	os_aio_array_t*	array;
+	ulint		n_res	= 0;
+
+	array = os_aio_read_array;
+
+	os_mutex_enter(array->mutex);
+	n_res += array->n_reserved; 
+	os_mutex_exit(array->mutex);
+
+	array = os_aio_write_array;
+
+	os_mutex_enter(array->mutex);
+	n_res += array->n_reserved; 
+	os_mutex_exit(array->mutex);
+
+	array = os_aio_ibuf_array;
+
+	os_mutex_enter(array->mutex);
+	n_res += array->n_reserved; 
+	os_mutex_exit(array->mutex);
+
+	array = os_aio_log_array;
+
+	os_mutex_enter(array->mutex);
+	n_res += array->n_reserved; 
+	os_mutex_exit(array->mutex);
+
+	array = os_aio_sync_array;
+
+	os_mutex_enter(array->mutex);
+	n_res += array->n_reserved; 
+	os_mutex_exit(array->mutex);
+
+	return n_res == 0 ? TRUE : FALSE;
+}
+
+
+
+
+
+
 
 
 

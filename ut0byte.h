@@ -4,6 +4,13 @@
 /*基础的常量和mySQL相关的常量*/
 #include "univ.h"
 
+typedef	struct dulint_struct	dulint;
+struct dulint_struct
+{
+	ulint	high;	/* most significant 32 bits */
+	ulint	low;	/* least significant 32 bits */
+};
+
 /*构建一个64位的整型数*/
 UNIV_INLINE ib_uint64_t ut_ull_create(ulint high, ulint low) __attribute__((const));
 

@@ -20,10 +20,19 @@
     <Filter Include="sync">
       <UniqueIdentifier>{1d9d6728-4978-4f9b-aa81-e9cacc76687d}</UniqueIdentifier>
     </Filter>
+    <Filter Include="log">
+      <UniqueIdentifier>{7ed52690-a70f-4b96-b708-5a917959cf2a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="mach">
+      <UniqueIdentifier>{e3ac6cd4-552e-4e12-87cc-f9db5871e73a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
       <Filter>Resource Files</Filter>
+    </None>
+    <None Include="log0log.inl">
+      <Filter>log</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -111,6 +120,12 @@
     <ClInclude Include="os0file.h">
       <Filter>os</Filter>
     </ClInclude>
+    <ClInclude Include="log0log.h">
+      <Filter>log</Filter>
+    </ClInclude>
+    <ClInclude Include="mach0data.h">
+      <Filter>mach</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -184,6 +199,9 @@
     </ClCompile>
     <ClCompile Include="os0file.cc">
       <Filter>os</Filter>
+    </ClCompile>
+    <ClCompile Include="mach0data.cc">
+      <Filter>mach</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
