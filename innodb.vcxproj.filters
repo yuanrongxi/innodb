@@ -203,5 +203,8 @@
     <ClCompile Include="mach0data.cc">
       <Filter>mach</Filter>
     </ClCompile>
+    <ClCompile Include="log0log.cc">
+      <Filter>log</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

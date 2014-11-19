@@ -139,3 +139,82 @@ UNIV_INLINE void log_block_init_in_old_format(byte* log_block, dulint lsn)
 	log_block_set_data_len(log_block, LOG_BLOCK_HDR_SIZE);
 	log_block_set_first_rec_group(log_block, 0);
 }
+
+UNIV_INLINE dulint log_reserve_and_write_fast(byte* str, ulint len ,dulint start_len, ibool* success)
+{
+	log_t* log = log_sys;
+	ulint data_len;
+	dulint lsn;
+
+	*success = TRUE;
+
+	data_len = len + log->buf_free % OS_FILE_LOG_BLOCK_SIZE;
+	/*在线备份或者buf_free与str无法凑成512字节块,快速写应该是一定能凑成512*/
+	if(log->online_backup_state || data_len >= OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE){
+		*success = FALSE;
+		mutex_exit(&(log->mutex));
+		return ut_dulint_zero;
+	}
+
+	*start_lsn = log->lsn;
+	ut_memcpy(log->buf + log->buf_free, str, len);
+	/*设置块的数据长度*/
+	log_block_set_data_len(ut_align_down(log->buf + log->buf_free, OS_FILE_LOG_BLOCK_SIZE), data_len);
+
+#ifdef UNIV_LOG_DEBUG
+	log->old_buf_free = log->buf_free;
+	log->old_lsn = log->lsn;
+#endif
+
+	log->buf_free += len;
+	ut_ad(log->buf_free <= log->buf_size);
+	/*生成新的lsn*/
+	lsn = ut_dulint_add(log->lsn, len);
+	log->lsn = lsn;
+
+#ifdef UNIV_LOG_DEBUG
+	log_check_log_recs(log->buf + log->old_buf_free, log->buf_free - log->old_buf_free, log->old_lsn);	
+#endif
+
+	return lsn;
+}
+
+UNIV_INLINE void log_release()
+{
+	mutex_exit(&(log_sys->mutex));
+}
+
+/*获得log_t的lsn*/
+UNIV_INLINE dulint log_get_lsn()
+{
+	dulint	lsn;
+
+	mutex_enter(&(log_sys->mutex));
+	lsn = log_sys->lsn;
+	mutex_exit(&(log_sys->mutex));
+
+	return(lsn);
+}
+
+/*数据库在修改了4个以上的page是必须调用一次这个函数，这个线程没有在做锁同步，除了dictionary mutex以外*/
+UNIV_INLINE void log_free_check()
+{
+	if(log_sys->check_flush_or_checkpoint) /*检查是否需要log buffer刷盘或者建立一个checkpoint*/
+		log_check_margins();
+}
+
+UNIV_INLINE dulint log_get_online_backup_lsn_low()
+{
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	ut_ad(log_sys->online_backup_state);
+
+	return(log_sys->online_backup_lsn);
+}
+
+UNIV_INLINE ibool log_get_online_backup_state_low(void)
+{
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	return(log_sys->online_backup_state);
+}
+
+

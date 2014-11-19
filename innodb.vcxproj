@@ -113,6 +113,7 @@
     <ClCompile Include="ha0ha.cc" />
     <ClCompile Include="ha0storage.cc" />
     <ClCompile Include="hash0hash.cc" />
+    <ClCompile Include="log0log.cc" />
     <ClCompile Include="mach0data.cc" />
     <ClCompile Include="mem0dbg.cc" />
     <ClCompile Include="mem0mem.cc" />

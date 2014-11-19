@@ -58,8 +58,8 @@ typedef struct log_struct
 	ulint			buf_size;			/*log缓冲区长度*/
 	ulint			max_buf_free;		/*在log buffer刷盘后，推荐buf_free的最大值*/
 	
-	ulint			old_buf_free;		/*？？*/
-	dulint			old_lsn;
+	ulint			old_buf_free;		/*上次写时buf_free的值*/
+	dulint			old_lsn;			/*上次写时的lsn*/
 
 	ibool			check_flush_or_checkpoint; /*需要日志写盘或者是需要刷新一个log checkpoint的标识*/
 
@@ -104,8 +104,8 @@ typedef struct log_struct
 	byte*			archive_buf;
 	os_event_t		archiving_on;
 
-	ibool			online_backup_state;
-	dulint			online_backup_lsn;
+	ibool			online_backup_state;	/*是否在backup*/
+	dulint			online_backup_lsn;		/*backup时的lsn*/
 }log_t;
 
 extern	ibool	log_do_write;
@@ -179,6 +179,17 @@ extern log_t*	log_sys;
 #define LOG_GROUP_OK				301
 #define LOG_GROUP_CORRUPTED			302
 #endif
+
+/********************************函数*********************************/
+/*设置fsp_current_free_limit,这个改变有可能会产生一个checkpoint*/
+void log_fsp_current_free_limit_set_and_checkpoint(ulint limit);
+
+/*将str写入到log_sys当中，必须和buf_free凑成512的块，否则返回失败*/
+UNIV_INLINE dulint log_reserve_and_write_fast(byte*	str, ulint	len, dulint* start_lsn, ibool* success);
+UNIV_INLINE void log_release();
+UNIV_INLINE VOID log_free_check();
+
+dulint log_reserve_and_open(ulint len);
 
 #include "log0log.inl"
 
