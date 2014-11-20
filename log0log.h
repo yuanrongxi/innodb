@@ -71,6 +71,7 @@ typedef struct log_struct
 
 	dulint			flush_lsn;			/*flush的lsn*/
 	ulint			flush_end_offset;
+	ulint			n_pending_writes;
 
 	os_event_t		no_flush_event;		/*处于flush过程中的信号等待*/
 
@@ -94,6 +95,7 @@ typedef struct log_struct
 	byte*			checkpoint_buf;
 
 	ulint			archiving_state;
+	dulint			archived_lsn;
 	dulint			max_archived_lsn_age_async;
 	dulint			max_archived_lsn_age;
 	dulint			next_archived_lsn;
@@ -185,11 +187,25 @@ extern log_t*	log_sys;
 void log_fsp_current_free_limit_set_and_checkpoint(ulint limit);
 
 /*将str写入到log_sys当中，必须和buf_free凑成512的块，否则返回失败*/
-UNIV_INLINE dulint log_reserve_and_write_fast(byte*	str, ulint	len, dulint* start_lsn, ibool* success);
-UNIV_INLINE void log_release();
-UNIV_INLINE VOID log_free_check();
+UNIV_INLINE dulint	log_reserve_and_write_fast(byte*	str, ulint	len, dulint* start_lsn, ibool* success);
+UNIV_INLINE void	log_release();
+UNIV_INLINE VOID	log_free_check();
+UNIV_INLINE dulint	log_get_lsn();
+UNIV_INLINE dulint	log_get_online_backup_lsn_low();
 
-dulint log_reserve_and_open(ulint len);
+dulint		log_reserve_and_open(ulint len);
+void		log_write_low(byte* str, ulint str_len);
+dulint		log_close();
+
+ulint		log_group_get_capacity(log_group_t* group);
+/*获得lsn在group中对应的文件和位置偏移*/
+ulint		log_calc_where_lsn_is(int64_t* log_file_offset, dulint first_header_lsn, dulint lsn, ulint n_log_files, int64_t log_file_size);
+void		log_group_set_fields(log_group_t* group, dulint lsn);
+
+/*初始化log_sys*/
+void		log_init();
+/*初始化goup*/
+void		log_group_init(ulint id, ulint n_files, ulint file_size, ulint space_id, ulint archive_space_id);
 
 #include "log0log.inl"
 
