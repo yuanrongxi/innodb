@@ -497,8 +497,601 @@ void log_init()
 
 void log_group_init(ulint id, ulint n_files, ulint file_size, ulint space_id, ulint archive_space_id)
 {
+	ulint	i;
+	log_group_t* group;
 
+	group = mem_alloc(sizeof(log_group_t));
+	group->id = id;
+	group->n_files = n_files;
+	group->file_size = file_size;
+	group->space_id = space_id;
+	group->state = LOG_GROUP_OK;
+	group->lsn = LOG_START_LSN;
+	group->lsn_offset = LOG_FILE_HDR_SIZE;
+	group->n_pending_writes = 0;
+
+	group->file_header_bufs = mem_alloc(sizeof(byte*) * n_files);
+	group->archive_file_header_bufs = mem_alloc(sizeof(byte*) * n_files);
+
+	for(i = 0; i < n_files; i ++){
+		*(group->file_header_bufs + i) = ut_align(mem_alloc(LOG_FILE_HDR_SIZE + OS_FILE_LOG_BLOCK_SIZE), OS_FILE_LOG_BLOCK_SIZE);
+		memset(*(group->file_header_bufs + i), 0, LOG_FILE_HDR_SIZE);
+
+		*(group->archive_file_header_bufs + i) = ut_align(mem_alloc(LOG_FILE_HDR_SIZE + OS_FILE_LOG_BLOCK_SIZE), OS_FILE_LOG_BLOCK_SIZE);
+		memset(*(group->archive_file_header_bufs + i), 0, LOG_FILE_HDR_SIZE);
+	}
+
+	group->archive_space_id = archive_space_id;
+	group->archived_file_no = 0;
+	group->archived_offset = 0;
+
+	group->checkpoint_buf = ut_align(mem_alloc(2 * OS_FILE_LOG_BLOCK_SIZE), OS_FILE_LOG_BLOCK_SIZE);
+	memset(group->checkpoint_buf, 0, OS_FILE_LOG_BLOCK_SIZE);
+
+	UT_LIST_ADD_LAST(log_groups, log_sys->log_groups, group);
+
+	ut_a(log_calc_max_ages());
 }
+
+/*触发unlock信号在io flush完成之后*/
+UNIV_INLINE void log_flush_do_unlocks(ulint code)
+{
+	ut_ad(mutex_own(&(log_sys->mutex)));
+
+	if(code & LOG_UNLOCK_NONE_FLUSHED_LOCK)
+		os_event_set(log_sys->one_flushed_event);
+
+	if(code & LOG_UNLOCK_FLUSH_LOCK)
+		os_event_set(log_sys->no_flush_event);
+}
+
+/*检查group 的io flush是否完成*/
+UNIV_INLINE ulint log_group_check_flush_completion(log_group_t* group)
+{
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	
+	if(!log_sys->one_flushed && group->n_pending_writes == 0){
+		if(log_debug_writes)
+			printf("Log flushed first to group %lu\n", group->id);
+
+		log_sys->written_to_some_lsn = log_sys->flush_lsn;
+		log_sys->one_flushed = TRUE;
+
+		return LOG_UNLOCK_NONE_FLUSHED_LOCK;
+	}
+
+	if(log_debug_writes && group->n_pending_writes == 0)
+		printf("Log flushed to group %lu\n", group->id);
+
+	return 0;
+}
+
+static ulint log_sys_check_flush_completion()
+{
+	ulint	move_start;
+	ulint	move_end;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	if(log_sys->n_pending_writes == 0){
+		log_sys->written_to_all_lsn = log_sys->flush_lsn;
+		log_sys->buf_next_to_write = log_sys->flush_end_offset;
+
+		/*数据向前移，因为全面的数据已经flush到磁盘*/
+		if(log_sys->flush_end_offset > log_sys->max_buf_free / 2){
+			/*确定移动的位置*/
+			move_start = ut_calc_align_down(log_sys->flush_end_offset, OS_FILE_LOG_BLOCK_SIZE);
+			move_end = ut_calc_align(log_sys->buf_free, OS_FILE_LOG_BLOCK_SIZE);
+			ut_memmove(log_sys->buf, log_sys->buf + move_start, move_end - move_start);
+			log_sys->buf_free -= move_start;
+
+			log_sys->buf_next_to_write -= move_start;
+		}
+
+		return(LOG_UNLOCK_FLUSH_LOCK);
+	}
+
+	return 0;
+}
+
+/*完成group的io操作*/
+void log_io_complete(log_group_t* group)
+{
+	ulint unlock;
+	/*一个日志归档类io*/
+	if((byte*)group == &log_archive_io){
+		log_io_complete_archive();
+		return;
+	}
+
+	/*一个checkpoint IO*/
+	if((ulint)group & 0x1){
+		group = (log_group_t*)((ulint)group - 1);
+		/*将file0file中的space写入到硬盘*/
+		if (srv_unix_file_flush_method != SRV_UNIX_O_DSYNC && srv_unix_file_flush_method != SRV_UNIX_NOSYNC)
+			fil_flush(group->space_id);
+
+		log_io_complete_checkpoint(group);
+
+		return;
+	}
+
+	ut_a(0); /*innodb都是采用同步写的方式写日志，一般不会到下面的代码中*/
+	
+	if(srv_unix_file_flush_method != SRV_UNIX_O_DSYNC && srv_unix_file_flush_method != SRV_UNIX_NOSYNC && srv_flush_log_at_trx_commit != 2)
+	{
+		fil_flush(group->space_id);
+	}
+
+	mutex_enter(&(log_sys->mutex));
+
+	ut_a(group->n_pending_writes > 0);
+	ut_a(log_sys->n_pending_writes > 0);
+
+	group->n_pending_writes--;
+	log_sys->n_pending_writes--;
+
+	unlock = log_group_check_flush_completion(group);
+	unlock = unlock | log_sys_check_flush_completion();
+
+	log_flush_do_unlocks(unlock);
+
+	mutex_exit(&(log_sys->mutex));
+}
+
+void log_flush_to_disk()
+{
+	log_group_t* group;
+
+loop:
+	mutex_enter(&(log_sys->mutex));
+	/*没有flush完成*/
+	if(log_sys->n_pending_writes > 0){
+		mutex_exit(&(log_sys->mutex));
+		/*进入等待状态*/
+		os_event_wait(log_sys->no_flush_event);
+		
+		goto loop;
+	}
+
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+
+	/*进行space刷盘时，防止其他线程同时进行*/
+	log_sys->n_pending_writes ++;
+	group->n_pending_writes ++;
+
+	os_event_reset(log_sys->no_flush_event);
+	os_event_reset(log_sys->one_flushed_event);
+
+	mutex_exit(&(log_sys->mutex));
+
+	/*space文件刷盘*/
+	fil_flush(group->space_id);
+
+	mutex_enter(&(log_sys->mutex));
+	ut_a(group->n_pending_writes == 1);
+	ut_a(log_sys->n_pending_writes == 1);
+
+	/*刷盘完成，pending回到完成的状态，以便log_io_complete进行判断*/
+	group->n_pending_writes--;
+	log_sys->n_pending_writes--;
+
+	os_event_set(log_sys->no_flush_event);
+	os_event_set(log_sys->one_flushed_event);
+
+	mutex_exit(&(log_sys->mutex));
+}
+
+/*将group header写入到log file当中*/
+static void log_group_file_header_flush(ulint type, log_group_t* group, ulint nth_file, dulint start_lsn)
+{
+	byte*	buf;
+	ulint	dest_offset;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	ut_a(nth_file < group->n_files);
+
+	/*找到文件对应goup中的头缓冲区*/
+	buf = *(group->file_header_bufs + nth_file);
+
+	/*写入group id*/
+	mach_write_to_4(buf + LOG_GROUP_ID, group->id);
+	/*写入起始的lsn*/
+	mach_write_to_8(buf + LOG_FILE_START_LSN, start_lsn);
+
+	memcpy(buf + LOG_FILE_WAS_CREATED_BY_HOT_BACKUP, "    ", 4);
+
+	dest_offset = nth_file * group->file_size;
+	if(log_debug_writes)
+		printf("Writing log file header to group %lu file %lu\n", group->id, nth_file);
+
+	if(log_do_write){
+		log_sys->n_log_ios++;
+
+		/*调用异步io进行文件写入*/
+		fil_io(OS_FILE_WRITE | OS_FILE_LOG, TRUE, group->space_id, dest_offset / UNIV_PAGE_SIZE, dest_offset % UNIV_PAGE_SIZE, OS_FILE_LOG_BLOCK_SIZE,
+			buf, group);
+	}
+}
+/*设置block的check sum*/
+static void log_block_store_checksum(byte* block)
+{
+	log_block_set_checksum(block, log_block_calc_checksum(block));
+}
+
+void log_group_write_buf(ulint type, log_group_t* group, byte* buf, ulint len, dulint start_lsn, ulint new_data_offset)
+{
+	ulint	write_len;
+	ibool	write_header;
+	ulint	next_offset;
+	ulint	i;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	ut_a(len % OS_FILE_LOG_BLOCK_SIZE == 0);
+	ut_a(ut_dulint_get_low(start_lsn) % OS_FILE_LOG_BLOCK_SIZE == 0);
+
+	if(new_data_offset == 0)
+		write_header = TRUE;
+	else
+		write_header = FALSE;
+
+loop:
+	if(len == 0)
+		return ;
+
+	next_offset = log_group_calc_lsn_offset(start_lsn, group);
+	if((next_offset % group->file_size == LOG_FILE_HDR_SIZE) && write_header){ /*可以进行group header头信息刷盘*/
+		log_group_file_header_flush(type, group, next_offset / group->file_size, start_lsn);
+	}
+
+	/*一个文件存储不下，分片存储*/
+	if((next_offset % group->file_size) + len > group->file_size) /*计算本次分片存储的大小*/
+		write_len = group->file_size - (next_offset % group->file_size);
+	else
+		write_len = len;
+
+	if(log_debug_writes){
+		printf("Writing log file segment to group %lu offset %lu len %lu\n"
+			"start lsn %lu %lu\n",
+			group->id, next_offset, write_len,
+			ut_dulint_get_high(start_lsn),
+			ut_dulint_get_low(start_lsn));
+		printf(
+			"First block n:o %lu last block n:o %lu\n",
+			log_block_get_hdr_no(buf),
+			log_block_get_hdr_no(buf + write_len - OS_FILE_LOG_BLOCK_SIZE));
+
+		ut_a(log_block_get_hdr_no(buf) == log_block_convert_lsn_to_no(start_lsn));
+		for(i = 0; i < write_len / OS_FILE_LOG_BLOCK_SIZE; i ++){
+			ut_a(log_block_get_hdr_no(buf) + i == log_block_get_hdr_no(buf + i * OS_FILE_LOG_BLOCK_SIZE));
+		}
+	}
+
+	/*计算各个block的check sum， write_len一定是512的整数倍*/
+	for(i = 0; i < write_len / OS_FILE_LOG_BLOCK_SIZE; i ++)
+		log_block_store_checksum(buf + i * OS_FILE_LOG_BLOCK_SIZE);
+
+	for(log_do_write){
+		log_sys->n_log_ios ++;
+		/*将block刷入磁盘*/
+		fil_io(OS_FILE_WRITE | OS_FILE_LOG, TRUE, group->space_id, next_offset / UNIV_PAGE_SIZE, next_offset % UNIV_PAGE_SIZE, write_len, buf, group);
+	}
+
+	if(write_len < len){
+		/*更改start lsn*/
+		start_lsn = ut_dulint_add(start_lsn, write_len);
+		len -= write_len;
+		buf += write_len;
+
+		write_header = TRUE;
+
+		goto loop;
+	}
+}
+
+void log_flush_up_to(dulint lsn, ulint wait)
+{
+	log_group_t*	group;
+	ulint		start_offset;
+	ulint		end_offset;
+	ulint		area_start;
+	ulint		area_end;
+	ulint		loop_count;
+	ulint		unlock;
+
+	/*没有ibuf log操作或者正在恢复数据库*/
+	if(recv_no_ibuf_operations)
+		return ;
+
+	loop_count;
+
+loop:
+	loop_count ++;
+	ut_ad(loop_count < 5);
+
+	if(loop_count > 2){
+		printf("Log loop count %lu\n", loop_count); 
+	}
+
+	mutex_enter(&(log_sys->mutex));
+
+	/*lsn <= 已经刷盘的lsn,*/
+	if ((ut_dulint_cmp(log_sys->written_to_all_lsn, lsn) >= 0) 
+		|| ((ut_dulint_cmp(log_sys->written_to_some_lsn, lsn) >= 0) && (wait != LOG_WAIT_ALL_GROUPS))) {
+			mutex_exit(&(log_sys->mutex));
+
+			return;
+	}
+
+	/*正在fil_flush*/
+	if(log_sys->n_pending_writes > 0){
+		if(ut_dulint_cmp(log_sys->flush_lsn, lsn) >= 0)
+			goto do_waits;
+
+		mutex_exit(&(log_sys->mutex));
+
+		/*进入no flush event等待*/
+		os_event_wait(log_sys->no_flush_event);
+
+		goto loop;
+	}
+
+	/*缓冲区中无数据刷盘*/
+	if(log_sys->buf_free == log_sys->buf_next_to_write){
+		mutex_exit(&(log_sys->mutex));
+		return;
+	}
+
+	if(log_debug_writes){
+		printf("Flushing log from %lu %lu up to lsn %lu %lu\n",
+			ut_dulint_get_high(log_sys->written_to_all_lsn),
+			ut_dulint_get_low(log_sys->written_to_all_lsn),
+			ut_dulint_get_high(log_sys->lsn),
+			ut_dulint_get_low(log_sys->lsn));
+	}
+
+	log_sys->n_pending_writes++;
+
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	group->n_pending_writes++; 
+
+	/*让其他监视这两个线程进行等待*/
+	os_event_reset(log_sys->no_flush_event);
+	os_event_reset(log_sys->one_flushed_event);
+
+	/*计算需要flush的位置范围*/
+	start_offset = log_sys->buf_next_to_write;
+	end_offset = log_sys->buf_free;
+
+	area_start = ut_calc_align_down(start_offset, OS_FILE_LOG_BLOCK_SIZE);
+	area_end = ut_calc_align(end_offset, OS_FILE_LOG_BLOCK_SIZE);
+
+	ut_ad(area_end - area_start > 0);
+
+	/*设置最后flush的lsn*/
+	log_sys->flush_lsn = log_sys->lsn;
+	log_sys->one_flushed = FALSE;
+
+	/*设置flush的标识位*/
+	log_block_set_flush_bit(log_sys->buf + area_start, TRUE);
+	/*在最后一块设置了checkpoint no*/
+	log_block_set_checkpoint_no(log_sys->buf + area_end - OS_FILE_LOG_BLOCK_SIZE, log_sys->next_checkpoint_no);
+
+	/*为什么将最后一个block向后移动,防止下次写不会写在最后flush的这个块上，因为buf_free 和flush_end_offset做了增长？？*/
+	ut_memcpy(log_sys->buf + area_end, log_sys->buf + area_end - OS_FILE_LOG_BLOCK_SIZE, OS_FILE_LOG_BLOCK_SIZE);
+	log_sys->buf_free += OS_FILE_LOG_BLOCK_SIZE;
+	log_sys->flush_end_offset = log_sys->buf_free;
+
+	/*将各个group buf刷入到磁盘*/
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	while(group){
+		/*将group buf刷入到文件的cache page当中*/
+		log_group_write_buf(LOG_FLUSH, group, log_sys->buf + area_start, area_end - area_start, 
+			ut_dulint_align_down(log_sys->written_to_all_lsn, OS_FILE_LOG_BLOCK_SIZE), start_offset - area_start);
+
+		/*设置新的group->lsn*/
+		log_group_set_fields(group, log_sys->flush_lsn);
+		group = UT_LIST_GET_NEXT(log_groups, group);
+	}
+
+	mutex_exit(&(log_sys->mutex));
+
+	if (srv_unix_file_flush_method != SRV_UNIX_O_DSYNC && srv_unix_file_flush_method != SRV_UNIX_NOSYNC && srv_flush_log_at_trx_commit != 2) {
+			group = UT_LIST_GET_FIRST(log_sys->log_groups);
+			fil_flush(group->space_id);
+	}
+
+	mutex_enter(&(log_sys->mutex));
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+
+	ut_a(group->n_pending_writes == 1);
+	ut_a(log_sys->n_pending_writes == 1);
+
+	group->n_pending_writes--;
+	log_sys->n_pending_writes--;
+
+	/*检测io是否完成*/
+	unlock = log_group_check_flush_completion(group);
+	unlock = unlock | log_sys_check_flush_completion();
+	log_flush_do_unlocks(unlock);
+
+	mutex_exit(log_sys->mutex);
+	return;
+
+do_waits:
+	mutex_exit(&(log_sys->mutex));
+
+	/*等待操作完成的信号*/
+	if(wait == LOG_WAIT_ONE_GROUP)
+		os_event_wait(log_sys->one_flushed_event);
+	else if(wait == LOG_WAIT_ALL_GROUPS)
+		os_event_wait(log_sys->no_flush_event);
+	else
+		ut_ad(wait == LOG_NO_WAIT);
+}
+
+static void log_flush_margin()
+{
+	ibool	do_flush = FALSE;
+	log_t*	log = log_sys;
+
+	mutex_enter(&(log->mutex));
+	if(log->buf_free > log->max_buf_free){ /*已经超过了容忍的最大位置，必须进行强制刷盘*/
+		if(log->n_pending_writes > 0){
+
+		}
+		else{
+			do_flush = TRUE;
+		}
+	}
+
+	mutex_exit(&(log->mutex));
+	if(do_flush) /*强制将log_sys刷盘*/
+		log_flush_up_to(ut_dulint_max, LOG_NO_WAIT);
+}
+
+/********************************************************************
+Advances the smallest lsn for which there are unflushed dirty blocks in the
+buffer pool. NOTE: this function may only be called if the calling thread owns
+no synchronization objects! */
+ibool log_preflush_pool_modified_pages(dulint new_oldest, ibool sync)
+{
+	ulint n_pages;
+
+	if(recv_recovery_on){ /*正在进行数据恢复，必须将所有的记录的log加入到他们搁置的file page里面要获得正确的lsn*/
+		recv_apply_hashed_log_recs(TRUE);
+	}
+
+	n_pages = buf_flush_batch(BUF_FLUSH_LIST, ULINT_MAX, new_oldest);
+	if(sync)
+		buf_flush_wait_batch_end(BUF_FLUSH_LIST);
+	
+	return (n_pages == ULINT_UNDEFINED) ? FALSE : TRUE;
+}
+
+static void log_complete_checkpoint()
+{
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	ut_ad(log_sys->n_pending_checkpoint_writes == 0);
+
+	/*checkpoint ++*/
+	log_sys->next_checkpoint_no = ut_dulint_add(log_sys->next_checkpoint_no, 1);
+	/*更改last checkpoint lsn*/
+	log_sys->last_checkpoint_lsn = log_sys->next_checkpoint_lsn;
+
+	/*释放独占的checkpoint_lock*/
+	rw_lock_x_unlock_gen(&(log_sys->checkpoint_lock), LOG_CHECKPOINT);
+}
+
+static void log_io_complete_checkpoint(log_group_t* group)
+{
+	mutex_enter(&(log_sys->mutex));
+
+	ut_ad(log_sys->n_pending_checkpoint_writes > 0);
+	log_sys->n_pending_checkpoint_writes --;
+
+	if(log_debug_writes)
+		printf("Checkpoint info written to group %lu\n", group->id);
+	
+	/*已经完成了所有check io操作*/
+	if(log_sys->n_pending_checkpoint_writes == 0)
+		log_complete_checkpoint();
+
+	mutex_exit(&(log_sys->mutex));
+}
+
+/*设置checkpoint位置*/
+static void log_checkpoint_set_nth_group_info(byte* buf, ulint n, ulint file_no, ulint offset)
+{
+	ut_ad(n < LOG_MAX_N_GROUPS);
+	/*将checkpoint的文件和对应位置写入buf当中*/
+	mach_write_to_4(buf + LOG_CHECKPOINT_GROUP_ARRAY + 8 * n + LOG_CHECKPOINT_ARCHIVED_FILE_NO, file_no);
+	mach_write_to_4(buf + LOG_CHECKPOINT_GROUP_ARRAY + 8 * n + LOG_CHECKPOINT_ARCHIVED_OFFSET, offset);
+}
+
+/*从buf中获取一个checkpoint的文件位置*/
+void log_checkpoint_get_nth_group_info(byte* buf, ulint	n, ulint* file_no, ulint* offset)	
+{
+	ut_ad(n < LOG_MAX_N_GROUPS);
+
+	*file_no = mach_read_from_4(buf + LOG_CHECKPOINT_GROUP_ARRAY
+		+ 8 * n + LOG_CHECKPOINT_ARCHIVED_FILE_NO);
+
+	*offset = mach_read_from_4(buf + LOG_CHECKPOINT_GROUP_ARRAY
+		+ 8 * n + LOG_CHECKPOINT_ARCHIVED_OFFSET);
+}
+
+/*将checkpoint信息写入到group header缓冲区*/
+static void log_group_checkpoint(log_group_t* group)
+{
+	log_group_t*	group2;
+	dulint	archived_lsn;
+	dulint	next_archived_lsn;
+	ulint	write_offset;
+	ulint	fold;
+	byte*	buf;
+	ulint	i;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	ut_a(LOG_CHECKPOINT_SIZE <= OS_FILE_LOG_BLOCK_SIZE);
+
+	buf = group->checkpoint_buf;
+	/*写入checkpoint no*/
+	mach_write_to_8(buf + LOG_CHECKPOINT_NO, log_sys->next_checkpoint_no);
+	/*写入checkpoint lsn*/
+	mach_write_to_8(buf + LOG_CHECKPOINT_LSN, log_sys->next_checkpoint_lsn);
+	/*next_checkpoint_lsn相对group 的起始位置*/
+	mach_write_to_4(buf + LOG_CHECKPOINT_OFFSET,log_group_calc_lsn_offset(log_sys->next_checkpoint_lsn, group));
+
+	/*归档状态为关闭，设置为最大的lsn*/
+	if(log_sys->archiving_state == LOG_ARCH_OFF)
+		archived_lsn = ut_dulint_max;
+	else{
+		archived_lsn = log_sys->archived_lsn;
+		if (0 != ut_dulint_cmp(archived_lsn, log_sys->next_archived_lsn))
+				next_archived_lsn = log_sys->next_archived_lsn;
+	}
+	mach_write_to_8(buf + LOG_CHECKPOINT_ARCHIVED_LSN, archived_lsn);
+
+	/*初始化每个group checkpoint位置信息*/
+	for(i = 0; i < LOG_MAX_N_GROUPS; i ++){
+		log_checkpoint_set_nth_group_info(buf, i, 0, 0);
+	}
+
+	group2 = UT_LIST_GET_FIRST(log_sys->log_groups);
+	while (group2) {
+		/*设置每个group的checkpoint位置信息*/
+		log_checkpoint_set_nth_group_info(buf, group2->id, group2->archived_file_no, group2->archived_offset);
+		group2 = UT_LIST_GET_NEXT(log_groups, group2);
+	}
+
+	fold = ut_fold_binary(buf, LOG_CHECKPOINT_CHECKSUM_1);
+	mach_write_to_4(buf + LOG_CHECKPOINT_CHECKSUM_1, fold); /*用hash作为checksum*/
+	fold = ut_fold_binary(buf + LOG_CHECKPOINT_LSN, LOG_CHECKPOINT_CHECKSUM_2 - LOG_CHECKPOINT_LSN);
+	mach_write_to_4(buf + LOG_CHECKPOINT_CHECKSUM_2, fold); /*用除checkpoint no以外的信息计算的checksum(会包括checksum1)*/
+	/*设置free limit*/
+	mach_write_to_4(buf + LOG_CHECKPOINT_FSP_FREE_LIMIT, log_fsp_current_free_limit);
+	/*设置魔法字*/
+	mach_write_to_4(buf + LOG_CHECKPOINT_FSP_MAGIC_N, LOG_CHECKPOINT_FSP_MAGIC_N_VAL);
+
+	if (ut_dulint_get_low(log_sys->next_checkpoint_no) % 2 == 0)
+		write_offset = LOG_CHECKPOINT_1;
+	else 
+		write_offset = LOG_CHECKPOINT_2;
+
+	if(log_do_write){
+		if(log_sys->n_pending_checkpoint_writes == 0)
+			rw_lock_x_lock_gen(&(log_sys->checkpoint_lock), LOG_CHECKPOINT);
+
+		log_sys->n_pending_checkpoint_writes ++;
+		log_sys->n_log_ios ++;
+
+		fil_io(OS_FILE_WRITE | OS_FILE_LOG, FALSE, group->space_id, write_offset / UNIV_PAGE_SIZE, write_offset % UNIV_PAGE_SIZE, OS_FILE_LOG_BLOCK_SIZE,
+			buf, ((byte*)group + 1));
+
+		ut_ad(((ulint)group & 0x1) == 0);
+	}
+}
+
 
 
 

@@ -56,7 +56,7 @@ typedef struct log_struct
 	mutex_t			mutex;				/*log保护的mutex*/
 	byte*			buf;				/*log缓冲区*/
 	ulint			buf_size;			/*log缓冲区长度*/
-	ulint			max_buf_free;		/*在log buffer刷盘后，推荐buf_free的最大值*/
+	ulint			max_buf_free;		/*在log buffer刷盘后，推荐buf_free的最大值，超过这个值会被强制刷盘*/
 	
 	ulint			old_buf_free;		/*上次写时buf_free的值*/
 	dulint			old_lsn;			/*上次写时的lsn*/
@@ -65,13 +65,13 @@ typedef struct log_struct
 
 	UT_LIST_BASE_NODE_T(log_group_t) log_groups;
 
-	ulint			buf_next_to_write;	/**/
+	ulint			buf_next_to_write;	/*下一次开始写入磁盘的buf偏移位置*/
 	dulint			written_to_some_lsn;/**/
 	dulint			written_to_all_lsn;
 
 	dulint			flush_lsn;			/*flush的lsn*/
 	ulint			flush_end_offset;
-	ulint			n_pending_writes;
+	ulint			n_pending_writes;	/*正在调用fil_flush的个数*/
 
 	os_event_t		no_flush_event;		/*处于flush过程中的信号等待*/
 
@@ -90,7 +90,7 @@ typedef struct log_struct
 	dulint			next_checkpoint_no;
 	dulint			last_checkpoint_lsn;
 	dulint			next_checkpoint_lsn;
-	dulint			n_pending_checkpoint_writes;
+	ulint			n_pending_checkpoint_writes;
 	rw_lock_t		checkpoint_lock;	/*checkpoint的rw_lock_t,在checkpoint的时候，是独占这个latch*/
 	byte*			checkpoint_buf;
 
@@ -206,6 +206,24 @@ void		log_group_set_fields(log_group_t* group, dulint lsn);
 void		log_init();
 /*初始化goup*/
 void		log_group_init(ulint id, ulint n_files, ulint file_size, ulint space_id, ulint archive_space_id);
+/*完成一个io操作*/
+void		log_io_complete(log_group_t* group);
+
+/*将日志文件flush到磁盘上,例如调用fsync,触发条件srv_flush_log_at_trx_commit = FALSE*/
+void		log_flush_to_disk();
+
+/*将buf 刷盘入group log file当中*/
+void		log_group_write_buf(ulint type, log_group_t* group, byte* buf, ulint len, dulint start_lsn, ulint new_data_offset);
+
+/*将sys_log中所有的group进行flush*/
+void		log_flush_up_to(dulint lsn, ulint wait);
+
+/********************************************************************
+Advances the smallest lsn for which there are unflushed dirty blocks in the
+buffer pool. NOTE: this function may only be called if the calling thread owns
+no synchronization objects! */
+ibool		log_preflush_pool_modified_pages(dulint new_oldest, ibool sync);
+
 
 #include "log0log.inl"
 
