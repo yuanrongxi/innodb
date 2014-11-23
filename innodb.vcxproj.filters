@@ -26,6 +26,9 @@
     <Filter Include="mach">
       <UniqueIdentifier>{e3ac6cd4-552e-4e12-87cc-f9db5871e73a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="fil">
+      <UniqueIdentifier>{d9c0880d-f5a7-4ded-9841-3a35bba219bd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -126,6 +129,9 @@
     <ClInclude Include="mach0data.h">
       <Filter>mach</Filter>
     </ClInclude>
+    <ClInclude Include="fil0fil.h">
+      <Filter>fil</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -205,6 +211,9 @@
     </ClCompile>
     <ClCompile Include="log0log.cc">
       <Filter>log</Filter>
+    </ClCompile>
+    <ClCompile Include="fil0fil.cc">
+      <Filter>fil</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

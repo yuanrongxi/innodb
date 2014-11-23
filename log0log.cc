@@ -58,7 +58,7 @@ byte log_archive_io;
 static void log_io_complete_checkpoint(log_group_t* group);
 /*完成archive的io操作*/
 static void log_io_complete_archive();
-
+/*检查archive日志文件归档是否可以触发*/
 static void log_archive_margin();
 
 /*设置fsp_current_free_limit,这个改变有可能会产生一个checkpoint*/
@@ -1000,7 +1000,7 @@ static void log_io_complete_checkpoint(log_group_t* group)
 }
 
 /*设置checkpoint位置*/
-static void log_checkpoint_set_nth_group_info(byte* buf, ulint n, ulint file_no, ulint offset)
+static void log_checkpoint_get_nth_group_info(byte* buf, ulint n, ulint file_no, ulint offset)
 {
 	ut_ad(n < LOG_MAX_N_GROUPS);
 	/*将checkpoint的文件和对应位置写入buf当中*/
@@ -1079,7 +1079,7 @@ static void log_group_checkpoint(log_group_t* group)
 		write_offset = LOG_CHECKPOINT_2;
 
 	if(log_do_write){
-		if(log_sys->n_pending_checkpoint_writes == 0)
+		if(log_sys->n_pending_checkpoint_writes == 0) /*没有检查点在IO操作，n_pending_checkpoint_writes在checkpoint完成的时候会--*/
 			rw_lock_x_lock_gen(&(log_sys->checkpoint_lock), LOG_CHECKPOINT);
 
 		log_sys->n_pending_checkpoint_writes ++;
@@ -1092,6 +1092,996 @@ static void log_group_checkpoint(log_group_t* group)
 	}
 }
 
+/*当log files建立的时候，需要在更新group file头信息和checkpoint信息*/
+void log_reset_first_header_and_checkpoint(byte* hdr_buf, dulint start)
+{
+	ulint	fold;
+	byte*	buf;
+	dulint	lsn;
+
+	mach_write_to_4(hdr_buf + LOG_GROUP_ID, 0);	
+	mach_write_to_8(hdr_buf + LOG_FILE_START_LSN, start); /*重做日志中第一个日志的lsn*/
+
+	lsn = ut_dulint_add(start, LOG_BLOCK_HDR_SIZE);
+
+	/*写入一个与时间戳关联的ibbackup标志*/
+	sprintf(hdr_buf + LOG_FILE_WAS_CREATED_BY_HOT_BACKUP, "ibbackup ");
+	ut_sprintf_timestamp(hdr_buf + LOG_FILE_WAS_CREATED_BY_HOT_BACKUP + strlen("ibbackup "));
+
+	buf = hdr_buf + LOG_CHECKPOINT_1;
+	mach_write_to_8(buf + LOG_CHECKPOINT_NO, ut_dulint_zero);
+	mach_write_to_8(buf + LOG_CHECKPOINT_LSN, lsn);
+
+	mach_write_to_4(buf + LOG_CHECKPOINT_OFFSET, LOG_FILE_HDR_SIZE + LOG_BLOCK_HDR_SIZE);
+
+	mach_write_to_4(buf + LOG_CHECKPOINT_LOG_BUF_SIZE, 2 * 1024 * 1024);
+
+	mach_write_to_8(buf + LOG_CHECKPOINT_ARCHIVED_LSN, ut_dulint_max);
+
+	/*计算一个checksum*/
+	fold = ut_fold_binary(buf, LOG_CHECKPOINT_CHECKSUM_1);
+	mach_write_to_4(buf + LOG_CHECKPOINT_CHECKSUM_1, fold);
+
+	fold = ut_fold_binary(buf + LOG_CHECKPOINT_LSN, LOG_CHECKPOINT_CHECKSUM_2 - LOG_CHECKPOINT_LSN);
+	mach_write_to_4(buf + LOG_CHECKPOINT_CHECKSUM_2, fold);
+}
+
+/*从group header头信息中读取checkpoint到log_sys->checkpoint_buf当中*/
+void log_group_read_checkpoint_info(log_group_t* group)
+{
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	log_sys->n_log_ios ++;
+
+	/*文件读取*/
+	file_io(OS_FILE_READ | OS_FILE_LOG, TRUE, group->space_id, field / UNIV_PAGE_SIZE, field % UNIV_PAGE_SIZE, OS_FILE_LOG_BLOCK_SIZE,
+		log_sys->checkpoint_buf, NULL);
+}
+
+void log_groups_write_checkpoint_info()
+{
+	log_group_t* group;
+	ut_ad(mutex_own(&(log_sys->mutex)));
+
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	while(group != NULL){
+		/*将group的checkpoint信息写入到磁盘上*/
+		log_group_checkpoint(group);
+		group = UT_LIST_GET_NEXT(log_groups, group);
+	}
+}
+
+ibool log_checkpoint(ibool sync, ibool write_always)
+{
+	dulint oldest_lsn;
+	if(recv_recovery_is_on()){ /*正在日志恢复*/
+		recv_apply_hashed_log_recs(TRUE);
+	}
+
+	if(srv_unix_file_flush_method != SRV_UNIX_NOSYNC)
+		fil_flush_file_spaces(FIL_TABLESPACE);
+
+	mutex_enter(&(log_sys->mutex));
+	/*获得ibuff中的oldest lsn*/
+	oldest_lsn = log_buf_pool_get_oldest_modification();
+	mutex_exit(&(log_sys->mutex));
+
+	/*将group中的的page和日志全部进行刷盘*/
+	log_flush_up_to(oldest_lsn, LOG_WAIT_ALL_GROUPS);
+
+	mutex_enter(&(log_sys->mutex));
+
+	/*最近的checkpoint大于oldest_lsn,不需要进行checkpoint*/
+	if (!write_always && ut_dulint_cmp(log_sys->last_checkpoint_lsn, oldest_lsn) >= 0){
+			mutex_exit(&(log_sys->mutex));
+
+			return(TRUE);
+	}
+
+	ut_ad(ut_dulint_cmp(log_sys->written_to_all_lsn, oldest_lsn) >= 0);
+	if(log_sys->n_pending_checkpoint_writes > 0){ /*已经有一个checkpoint在进行io写*/
+		mutex_exit(&(log_sys->mutex));
+
+		if(sync){ /*等待这个checkpoint完成，因为在checkpoint的时候，会独占checkpoint_lock*/
+			rw_lock_s_lock(&(log_sys->checkpoint_lock));
+			rw_lock_s_unlock(&(log_sys->checkpoint_lock));
+		}
+
+		return FALSE;
+	}
+
+	log_sys->next_checkpoint_lsn = oldest_lsn;
+	if (log_debug_writes) {
+		printf("Making checkpoint no %lu at lsn %lu %lu\n", ut_dulint_get_low(log_sys->next_checkpoint_no), ut_dulint_get_high(oldest_lsn),
+			ut_dulint_get_low(oldest_lsn));
+	}
+
+	/*写入checkpoint的信息到磁盘*/
+	log_groups_write_checkpoint_info();
+
+	mutex_exit(&(log_sys->mutex));
+
+	if (sync) { /*等待io完成, 在log_groups_write_checkpoint_info会占有checkpoint_lock*/
+		rw_lock_s_lock(&(log_sys->checkpoint_lock));
+		rw_lock_s_unlock(&(log_sys->checkpoint_lock));
+	}
+
+	return TRUE;
+}
+
+void log_make_checkpoint_at(dulint lsn, ibool write_always)
+{
+	ibool success = FALSE;
+
+	/*为page刷盘做预处理*/
+	while(!success)
+		success = log_preflush_pool_modified_pages(lsn, TRUE);
+
+	success = FALSE;
+	while(!success) /*尝试建立新的checkpoint*/
+		success = log_checkpoint(TRUE, write_always);
+}
+
+/*判断是否需要对page刷盘*/
+static void log_checkpoint_margin()
+{
+	log_t*	log		= log_sys;
+	ulint	age;
+	ulint	checkpoint_age;
+	ulint	advance;
+	dulint	oldest_lsn;
+	dulint	new_oldest;
+	ibool	do_preflush;
+	ibool	sync;
+	ibool	checkpoint_sync;
+	ibool	do_checkpoint;
+	ibool	success;
+
+loop:
+	sync = FALSE;
+	checkpoint_sync = FALSE;
+	do_preflush = FALSE;
+	do_checkpoint = FALSE;
+
+	mutex_enter(&(log->mutex));
+
+	/*不需要建立checkpoint*/
+	if(!log->check_flush_or_checkpoint){
+		mutex_exit(&(log->mutex));
+		return;
+	}
+
+	oldest_lsn = log_buf_pool_get_oldest_modification();
+	age = ut_dulint_minus(log->lsn, oldest_lsn);
+
+	if(age > log->max_modified_age_sync){ /*超过了page同步flush的阈值*/
+		sync = TRUE;
+		advance = 2 * (age - log->max_modified_age_sync);
+		new_oldest = ut_dulint_add(oldest_lsn, advance);
+
+		do_preflush = TRUE;
+	}
+	else if(age > log->max_modified_age_async){ /*超过了page异步flush的阈值*/
+		advance = age - log->max_modified_age_async;
+		new_oldest = ut_dulint_add(oldest_lsn, advance);
+		do_preflush = TRUE;
+	}
+	
+	/*检查是否触发了checkpoint建立的阈值*/
+	checkpoint_age = ut_dulint_minus(log->lsn, log->last_checkpoint_lsn);
+	if (checkpoint_age > log->max_checkpoint_age) {
+		checkpoint_sync = TRUE;
+		do_checkpoint = TRUE;
+
+	} 
+	else if (checkpoint_age > log->max_checkpoint_age_async) { /*建立checkpoint并异步刷盘*/
+		do_checkpoint = TRUE;
+		log->check_flush_or_checkpoint = FALSE;
+	} 
+	else {
+		log->check_flush_or_checkpoint = FALSE;
+	}
+
+	if(do_preflush){
+		success = log_preflush_pool_modified_pages(new_oldest, sync);
+		if(sync && !success){ /*进行重试*/
+			mutex_enter(&(log->mutex));
+			log->check_flush_or_checkpoint = TRUE;
+			mutex_exit(&(log->mutex));
+			goto loop;
+		}
+	}
+
+	if (do_checkpoint) {
+		/*创建checkpoint*/
+		log_checkpoint(checkpoint_sync, FALSE);
+		if (checkpoint_sync) /*重新检查是否要其他的刷盘操作*/
+			goto loop;
+	}
+}
+
+/*读取一段特定的log到缓冲区中*/
+void log_group_read_log_seg(ulint type, byte* buf, log_group_t* group, dulint start_lsn, dulint end_lsn)
+{
+	ulint	len;
+	ulint	source_offset;
+	ibool	sync;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+
+	sync = FALSE;
+	if(type == LOG_RECOVER) /*是恢复过程的读取*/
+		sync = TRUE;
+
+loop:
+	source_offset = log_group_calc_lsn_offset(start_lsn, group);
+	len = ut_dulint_minus(end_lsn, start_lsn);
+
+	ut_ad(len != 0);
+	/*如果len长度过大，让其正好能防止在goup file的剩余空间里面*/
+	if((source_offset % group->file_size) + len > group->file_size)
+		len = group->file_size - (source_offset % group->file_size);
+
+	/*进行io操作统计*/
+	if(type == LOG_ARCHIVE)
+		log_sys->n_pending_archive_ios ++;
+	
+	log_sys->n_log_ios ++;
+
+	fil_io(OS_FILE_READ | OS_FILE_LOG, sync, group->space_id,source_offset / UNIV_PAGE_SIZE, source_offset % UNIV_PAGE_SIZE,
+		len, buf, &log_archive_io);
+
+	start_lsn = ut_dulint_add(start_lsn, len);
+	buf += len;
+
+	if (ut_dulint_cmp(start_lsn, end_lsn) != 0) /*没有达到预期读取的长度，继续*/
+		goto loop;
+}
+
+void log_archived_file_name_gen(char* buf, ulint id, ulint file_no)
+{
+	UT_NOT_USED(id);
+	sprintf(buf, "%sib_arch_log_%010lu", srv_arch_dir, file_no);
+}
+
+/*将archive header写入log file*/
+static void log_group_archive_file_header_write(log_group_t* group, ulint nth_file, ulint file_no, dulint start_lsn)
+{
+	byte* buf;
+	ulint dest_offset;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	ut_a(nth_file < group->n_files);
+
+	buf = *(group->archive_file_header_bufs + nth_file);
+
+	mach_write_to_4(buf + LOG_GROUP_ID, group->id);
+	mach_write_to_8(buf + LOG_FILE_START_LSN, start_lsn);
+	mach_write_to_4(buf + LOG_FILE_NO, file_no);
+
+	mach_write_to_4(buf + LOG_FILE_ARCH_COMPLETED, FALSE);
+
+	dest_offset = nth_file * group->file_size;
+
+	log_sys->n_log_ios ++;
+
+	fil_io(OS_FILE_WRITE | OS_FILE_LOG, TRUE, group->archive_space_id, dest_offset / UNIV_PAGE_SIZE, dest_offset % UNIV_PAGE_SIZE, 
+		2 * OS_FILE_LOG_BLOCK_SIZE, buf, &log_archive_io);
+}
+
+/*修改log file header表示已经完成log file归档*/
+static void log_group_archive_completed_header_write(log_group_t* group, ulint nth_file, dulint end_lsn)
+{
+	byte*	buf;
+	ulint	dest_offset;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	ut_a(nth_file < group->n_files);
+
+	buf = *(group->archive_file_header_bufs + nth_file);
+	mach_write_to_4(buf + LOG_FILE_ARCH_COMPLETED, TRUE);
+	mach_write_to_8(buf + LOG_FILE_END_LSN, end_lsn);
+
+	dest_offset = nth_file * group->file_size + LOG_FILE_ARCH_COMPLETED;
+
+	fil_io(OS_FILE_WRITE | OS_FILE_LOG, TRUE, group->archive_space_id, dest_offset / UNIV_PAGE_SIZE, dest_offset % UNIV_PAGE_SIZE,
+		OS_FILE_LOG_BLOCK_SIZE, buf + LOG_FILE_ARCH_COMPLETED, &log_archive_io);
+}
+
+static void log_group_archive(log_group_t* group)
+{
+	os_file_t file_handle;
+	dulint	start_lsn;
+	dulint	end_lsn;
+	char	name[100];
+	byte*	buf;
+	ulint	len;
+	ibool	ret;
+	ulint	next_offset;
+	ulint	n_files;
+	ulint	open_mode;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+
+	/*计算归档的起始位置和终止位置*/
+	start_lsn = log_sys->archived_lsn;
+	end_lsn = log_sys->next_archived_lsn;
+	ut_ad(ut_dulint_get_low(start_lsn) % OS_FILE_LOG_BLOCK_SIZE == 0);
+	ut_ad(ut_dulint_get_low(end_lsn) % OS_FILE_LOG_BLOCK_SIZE == 0);
+
+	buf = log_sys->archive_buf;
+
+	n_files = 0;
+	next_offset = group->archived_offset;
+
+loop:
+	/*判断是否需要新建一个新的archive file*/
+	if((next_offset % group->file_size == 0) || (fil_space_get_size(group->archive_space_id) == 0)){
+		if(next_offset % group->file_size == 0)
+			open_mode = OS_FILE_CREATE; /*新建并打开一个文件*/
+		else
+			open_mode = OS_FILE_OPEN;	/*仅仅打开一个文件*/
+
+		log_archived_file_name_gen(name, group->id, group->archived_file_no + n_files);
+		fil_reserve_right_to_open();
+
+		file_handle = os_file_create(name, open_mode, OS_FILE_AIO, OS_DATA_FILE, &ret);
+		if (!ret && (open_mode == OS_FILE_CREATE)) /*要创建的文件已经存在，更改打开模式*/
+			file_handle = os_file_create(name, OS_FILE_OPEN, OS_FILE_AIO, OS_DATA_FILE, &ret);
+		/*磁盘无法建立或者打开文件*/
+		if (!ret) {
+			fprintf(stderr, "InnoDB: Cannot create or open archive log file %s.\n",name);
+			fprintf(stderr, "InnoDB: Cannot continue operation.\n"
+				"InnoDB: Check that the log archive directory exists,\n"
+				"InnoDB: you have access rights to it, and\n"
+				"InnoDB: there is space available.\n");
+			exit(1);
+		}
+
+		if (log_debug_writes)
+			printf("Created archive file %s\n", name);
+
+		ret = os_file_close(file_handle);
+		ut_a(ret);
+
+		fil_release_right_to_open();
+		fil_node_create(name, group->file_size / UNIV_PAGE_SIZE, group->archive_space_id);
+
+		if(next_offset % group->file_size == 0){ /*新建的归档文件*/
+			log_group_archive_file_header_write(group, n_files, group->archived_file_no + n_files, start_lsn);
+			next_offset += LOG_FILE_HDR_SIZE;
+		}
+	}
+
+	len = ut_dulint_minus(end_lsn, start_lsn);
+	/*进行分片存储*/
+	if (group->file_size < (next_offset % group->file_size) + len) /*文件空闲空间无法存放len长度的数据*/
+		len = group->file_size - (next_offset % group->file_size);
+
+	if (log_debug_writes) {
+		printf("Archiving starting at lsn %lu %lu, len %lu to group %lu\n",
+			ut_dulint_get_high(start_lsn), ut_dulint_get_low(start_lsn), len, group->id);
+	}
+
+	log_sys->n_pending_archive_ios ++;
+	log_sys->n_log_ios ++;
+
+	fil_io(OS_FILE_WRITE | OS_FILE_LOG, FALSE, group->archive_space_id,
+		next_offset / UNIV_PAGE_SIZE, next_offset % UNIV_PAGE_SIZE,
+		ut_calc_align(len, OS_FILE_LOG_BLOCK_SIZE), buf, &log_archive_io);
+
+	start_lsn = ut_dulint_add(start_lsn, len);
+	next_offset += len;
+	buf += len;
+
+	if (next_offset % group->file_size == 0)
+		n_files++;
+
+	if(ut_dulint_cmp(end_lsn, start_lsn) != 0)
+		goto loop;
+
+	group->next_archived_file_no = group->archived_file_no + n_files;
+	group->next_archived_offset = next_offset % group->file_size;
+	/*next_archived_offset一定是OS_FILE_LOG_BLOCK_SIZE对齐的*/
+	ut_ad(group->next_archived_offset % OS_FILE_LOG_BLOCK_SIZE == 0);
+}
+
+static void log_archive_groups()
+{
+	log_group_t* group;
+	ut_ad(mutex_own(&(log_sys->mutex)));
+
+	/*对group进行归档*/
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	log_group_archive(group);
+}
+
+static void log_archive_write_complete_groups()
+{
+	log_group_t*	group;
+	ulint		end_offset;
+	ulint		trunc_files;
+	ulint		n_files;
+	dulint		start_lsn;
+	dulint		end_lsn;
+	ulint		i;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	group->archived_file_no = group->next_archived_file_no;
+	group->archived_offset = group->next_archived_offset;
+
+	/*获得已经归档的文件*/
+	n_files = (UNIV_PAGE_SIZE * fil_space_get_size(group->archive_space_id)) / group->file_size;
+	ut_ad(n_files > 0);
+
+	end_offset = group->archived_offset;
+	if(end_offset % group->file_size == 0) /*前面的文件没有空闲*/
+		trunc_files = n_files;
+	else
+		trunc_files = n_files - 1;
+
+	if (log_debug_writes && trunc_files)
+		printf("Complete file(s) archived to group %lu\n", group->id);
+
+	start_lsn = ut_dulint_subtract(log_sys->next_archived_lsn, end_offset - LOG_FILE_HDR_SIZE + trunc_files * (group->file_size - LOG_FILE_HDR_SIZE));
+	end_lsn = start_lsn;
+
+	for(i = 0;i < trunc_files; i ++){
+		end_lsn = ut_dulint_add(end_lsn, group->file_size - LOG_FILE_HDR_SIZE);
+		/*修改该归档完成的信息*/
+		log_group_archive_completed_header_write(group, i, end_lsn);
+	}
+
+	fil_space_truncate_start(group->archive_space_id, trunc_files * group->file_size);
+
+	if(log_debug_writes)
+		printf("Archiving writes completed\n");
+}
+
+static void log_archive_check_completion_low()
+{
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	if(log_sys->n_pending_archive_ios == 0 && log_sys->archiving_phase == LOG_ARCHIVE_READ){
+		if (log_debug_writes) /*归档的数据读过程已经完成*/
+			printf("Archiving read completed\n");
+
+		/*进入写阶段*/
+		log_sys->archiving_phase = LOG_ARCHIVE_WRITE;
+		log_archive_groups();
+	}
+
+	/*完成archive io的过程*/
+	if(log_sys->n_pending_archive_ios == 0 && log_sys->archiving_phase == LOG_ARCHIVE_WRITE){
+		log_archive_write_complete_groups();
+		/*已经完成归档，释放archive_lock*/
+		log_sys->archived_lsn = log_sys->next_archived_lsn;
+		rw_lock_x_unlock_gen(&(log_sys->archive_lock), LOG_ARCHIVE);
+	}
+}
+
+static void log_io_complete_archive()
+{
+	log_group_t*	group;
+	mutex_enter(&(log_sys->mutex));
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	mutex_exit(&(log_sys->mutex));
+
+	/*对归档文件进行刷盘*/
+	fil_flush(group->archive_space_id);
+
+	mutex_enter(&(log_sys->mutex));
+	ut_ad(log_sys->n_pending_archive_ios > 0);
+	log_sys->n_pending_archive_ios --;
+
+	/*修改归档文件头状态*/
+	log_archive_check_completion_low();
+	mutex_exit(&(log_sys->mutex));
+}
+
+/**/
+ibool log_archive_do(ibool sync, ulint* n_bytes)
+{
+	ibool	calc_new_limit;
+	dulint	start_lsn;
+	dulint	limit_lsn;
+
+	calc_new_limit = TRUE;
+
+loop:
+	mutex_enter(&(log_sys->mutex));
+
+	if (log_sys->archiving_state == LOG_ARCH_OFF) { /*归档被关闭*/
+		mutex_exit(&(log_sys->mutex));
+		*n_bytes = 0;
+		return(TRUE);
+	}
+	else if(log_sys->archiving_state == LOG_ARCH_STOPPED || log_sys->archiving_state == LOG_ARCH_STOPPING2){
+		mutex_exit(&(log_sys->mutex));
+		os_event_wait(log_sys->archiving_on); /*等待完成信号*/
+		
+		/*mutex_enter(&(log_sys->mutex));*/
+		goto loop;
+	}
+
+	/*确定start_lsn 和 end_lsn*/
+	start_lsn = log_sys->archived_lsn;
+	if(calc_new_limit){
+		ut_ad(log_sys->archive_buf_size % OS_FILE_LOG_BLOCK_SIZE == 0);
+		limit_lsn = ut_dulint_add(start_lsn, log_sys->archive_buf_size);
+		/*不能超过当前log的lsn*/
+		if(ut_dulint_cmp(limit_lsn, log_sys->lsn) >= 0)
+			limit_lsn = ut_dulint_align_down(log_sys->lsn, OS_FILE_LOG_BLOCK_SIZE);
+	}
+
+	/*无任何数据归档*/
+	if(ut_dulint_cmp(log_sys->archived_lsn, limit_lsn) >= 0){
+		mutex_exit(&(log_sys->mutex));
+		*n_bytes = 0;
+		return(TRUE);
+	}
+
+	/*所有的group lsn小于limit_lsn，先进行log写盘，使得written_to_all_lsn不小于limit_lsn，这样才能进行归档操作*/
+	if (ut_dulint_cmp(log_sys->written_to_all_lsn, limit_lsn) < 0) {
+		mutex_exit(&(log_sys->mutex));
+		log_flush_up_to(limit_lsn, LOG_WAIT_ALL_GROUPS);
+		calc_new_limit = FALSE;
+
+		goto loop;
+	}
+
+	if(log_sys->n_pending_archive_ios > 0){
+		mutex_exit(&(log_sys->mutex));
+		if(sync){ /*等待正在进行的归档完成*/
+			rw_lock_s_lock(&(log_sys->archive_lock));
+			rw_lock_s_unlock(&(log_sys->archive_lock));
+		}
+
+		*n_bytes = log_sys->archive_buf_size;
+		return FALSE;
+	}
+	/*对archive_lock加独占锁*/
+	rw_lock_x_lock_gen(&(log_sys->archive_lock), LOG_ARCHIVE);
+	log_sys->archiving_phase = LOG_ARCHIVE_READ;
+	log_sys->next_archived_lsn = limit_lsn;
+
+	if(log_debug_writes)
+		printf("Archiving from lsn %lu %lu to lsn %lu %lu\n",
+		ut_dulint_get_high(log_sys->archived_lsn),
+		ut_dulint_get_low(log_sys->archived_lsn),
+		ut_dulint_get_high(limit_lsn),
+		ut_dulint_get_low(limit_lsn));
+
+	/*读取需要归档的数据*/
+	log_group_read_log_seg(LOG_ARCHIVE, log_sys->archive_buf, UT_LIST_GET_FIRST(log_sys->log_groups), start_lsn, limit_lsn);
+	mutex_exit(&(log_sys->mutex));
+
+	/*等待完成*/
+	if (sync) {
+		rw_lock_s_lock(&(log_sys->archive_lock));
+		rw_lock_s_unlock(&(log_sys->archive_lock));
+	}
+	
+	*n_bytes = log_sys->archive_buf_size;
+
+	return TRUE;
+}
+
+static void log_archive_all(void)
+{
+	dulint	present_lsn;
+	ulint	dummy;
+
+	mutex_enter(&(log_sys->mutex));
+
+	if (log_sys->archiving_state == LOG_ARCH_OFF) { /*归档操作关闭*/
+		mutex_exit(&(log_sys->mutex));
+		return;
+	}
+
+	present_lsn = log_sys->lsn;
+
+	mutex_exit(&(log_sys->mutex));
+
+	log_pad_current_log_block();
+
+	for (;;) {
+		mutex_enter(&(log_sys->mutex));
+
+		/*没有到归档范围不足，直接退出*/
+		if (ut_dulint_cmp(present_lsn, log_sys->archived_lsn) <= 0) {
+			mutex_exit(&(log_sys->mutex));
+
+			return;
+		}
+
+		mutex_exit(&(log_sys->mutex));
+		/*发起一个归档操作*/
+		log_archive_do(TRUE, &dummy);
+	}
+}	
+
+static void log_archive_close_groups(ibool increment_file_count)
+{
+	log_group_t* group;
+	ulint	trunc_len;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+
+	trunc_len = UNIV_PAGE_SIZE * fil_space_get_size(group->archive_space_id);
+	if(trunc_len > 0){
+		ut_a(trunc_len == group->file_size);
+		/*标志归档文件头信息为完成归档状态*/
+		log_group_archive_completed_header_write(group, 0, log_sys->archived_lsn);
+
+		fil_space_truncate_start(group->archive_space_id, trunc_len);
+
+		if(increment_file_count){
+			group->archived_offset = 0;
+			group->archived_file_no += 2;
+		}
+		
+		if(log_debug_writes)
+			printf("Incrementing arch file no to %lu in log group %lu\n", group->archived_file_no + 2, group->id);
+	}
+}
+
+/*完成所有的archive操作*/
+ulint log_archive_stop()
+{
+	ibool success;
+	mutex_enter(&(log_sysy->mutex));
+
+	if(log_sys->archiving_state != LOG_ARCH_ON){
+		mutex_exit(&(log_sys->mutex));
+		return(DB_ERROR);
+	}
+
+	log_sys->archiving_state = LOG_ARCH_STOPPING;
+	mutex_exit(&(log_sys->mutex));
+
+	log_archive_all();
+
+	mutex_enter(&(log_sys->mutex));
+	log_sys->archiving_state = LOG_ARCH_STOPPING2;
+	os_event_reset(log_sys->archiving_on);
+	mutex_exit(&(log_sys->mutex));
+
+	/*同步等待archive_lock完成*/
+	rw_lock_s_lock(&(log_sys->archive_lock));
+	rw_lock_s_unlock(&(log_sys->archive_lock));
+
+	log_archive_close_groups(TRUE);
+
+	mutex_exit(&(log_sys->mutex));
+	
+	/*强制进行checkpoint*/
+	success = FALSE;
+	while(!success)
+		success = log_checkpoint(TRUE, TRUE);
+
+	mutex_enter(&(log_sys->mutex));
+	log_sys->archiving_state = LOG_ARCH_STOPPED;
+	mutex_exit(&(log_sys->mutex));
+
+	return DB_SUCCESS;
+}
+/*由LOG_ARCH_STOPPED开启LOG_ARCH_ON*/
+ulint log_archive_start()
+{
+	mutex_enter(&(log_sys->mutex));
+
+	if (log_sys->archiving_state != LOG_ARCH_STOPPED) {
+		mutex_exit(&(log_sys->mutex));
+		return(DB_ERROR);
+	}	
+
+	/*重启archive*/
+	log_sys->archiving_state = LOG_ARCH_ON;
+	os_event_set(log_sys->archiving_on);
+	mutex_exit(&(log_sys->mutex));
+
+	return(DB_SUCCESS);
+}
+
+/*关闭archive机制*/
+ulint log_archive_noarchivelog(void)
+{
+loop:
+	mutex_enter(&(log_sys->mutex));
+
+	if (log_sys->archiving_state == LOG_ARCH_STOPPED
+		|| log_sys->archiving_state == LOG_ARCH_OFF) {
+
+			log_sys->archiving_state = LOG_ARCH_OFF;
+			os_event_set(log_sys->archiving_on);
+			mutex_exit(&(log_sys->mutex));
+
+			return(DB_SUCCESS);
+	}	
+
+	mutex_exit(&(log_sys->mutex));
+	/*完成所有的archive操作*/
+	log_archive_stop();
+	os_thread_sleep(500000);
+
+	goto loop;	
+}
+/*由LOG_ARCH_OFF开启LOG_ARCH_ON*/
+ulint log_archive_archivelog(void)
+{
+	mutex_enter(&(log_sys->mutex));
+
+	/*重新开启LOG_ARCH_ON*/
+	if (log_sys->archiving_state == LOG_ARCH_OFF) {
+		log_sys->archiving_state = LOG_ARCH_ON;
+		log_sys->archived_lsn = ut_dulint_align_down(log_sys->lsn, OS_FILE_LOG_BLOCK_SIZE);	
+		mutex_exit(&(log_sys->mutex));
+
+		return(DB_SUCCESS);
+	}	
+
+	mutex_exit(&(log_sys->mutex));
+	return(DB_ERROR);	
+}
+
+/*archive操作触发检测*/
+static void log_archive_margin()
+{
+	log_t*	log		= log_sys;
+	ulint	age;
+	ibool	sync;
+	ulint	dummy;
+
+loop:
+	mutex_enter(&(log_sys->mutex));
+	/*archive关闭状态*/
+	if (log->archiving_state == LOG_ARCH_OFF) {
+		mutex_exit(&(log->mutex));
+
+		return;
+	}
+
+	/*检查触发条件*/
+	age = ut_dulint_minus(log->lsn, log->archived_lsn);
+	if(age > log->max_archived_lsn_age) /*同步方式开始archive操作*/
+		sync = TRUE;
+	else if(age > log->max_archived_lsn_age_async){/*异步方式开始archive操作*/
+		sync = FALSE;
+	}
+	else{
+		mutex_exit(&(log->mutex));
+		return ;
+	}
+
+	mutex_exit(&(log->mutex));
+	log_archive_do(sync, &dummy);
+	if(sync)
+		goto loop;
+}
+
+/*检查是否可以刷盘或者建立checkpoint*/
+void log_check_margins()
+{
+loop:
+	/*检查日志文件是否刷盘*/
+	log_flush_margin();
+	/*检查是否触发建立checkpoint*/
+	log_checkpoint_margin();
+	/*检查是否可以触发归档操作*/
+	log_archive_margin();
+
+	mutex_enter(&(log_sys->mutex));
+	if (log_sys->check_flush_or_checkpoint){
+		mutex_exit(&(log_sys->mutex));
+		goto loop;
+	}
+	mutex_exit(&(log_sys->mutex));
+}
+
+/*将数据库切换到在线备份状态*/
+ulint log_switch_backup_state_on(void)
+{
+	dulint	backup_lsn;
+
+	mutex_enter(&(log_sys->mutex));
+	if (log_sys->online_backup_state) {
+		mutex_exit(&(log_sys->mutex));
+
+		return(DB_ERROR);
+	}
+
+	log_sys->online_backup_state = TRUE;
+	backup_lsn = log_sys->lsn;
+	log_sys->online_backup_lsn = backup_lsn;
+
+	mutex_exit(&(log_sys->mutex));
+
+	/* log_checkpoint_and_mark_file_spaces(); */
+
+	return(DB_SUCCESS);
+}
+
+/*将数据库切换出在线备份状态*/
+ulint log_switch_backup_state_off(void)
+{
+	mutex_enter(&(log_sys->mutex));
+
+	if (!log_sys->online_backup_state) {
+		mutex_exit(&(log_sys->mutex));
+
+		return(DB_ERROR);
+	}
+
+	log_sys->online_backup_state = FALSE;
+	mutex_exit(&(log_sys->mutex));
+
+	return(DB_SUCCESS);
+}
+
+/*数据库关闭时，对logs做保存操作*/
+void logs_empty_and_mark_files_at_shutdown()
+{
+	dulint	lsn;
+	ulint	arch_log_no;
+
+	ut_print_timestamp(stderr);
+	fprintf(stderr, "  InnoDB: Starting shutdown...\n");
+
+	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
+
+loop:
+	os_thread_sleep(100000);
+	mutex_enter(&kernel_mutex);
+
+	if(trx_n_mysql_transactions > 0 || UT_LIST_GET_LEN(trx_sys->trx_list) > 0){
+		mutex_exit(&kernel_mutex);
+		goto loop;
+	}
+
+	/*active线程没有退出*/
+	if (srv_n_threads_active[SRV_MASTER] != 0) {
+		mutex_exit(&kernel_mutex);
+		goto loop;
+	}
+	mutex_exit(&kernel_mutex);
+
+	mutex_enter(&(log_sys->mutex));
+	/*有IO Flush操作正在执行,等待其结束*/
+	if(log_sys->n_pending_archive_ios + log_sys->n_pending_checkpoint_writes + log_sys->n_pending_writes > 0){
+		mutex_exit(&(log_sys->mutex));
+		goto loop;
+	}
+
+	mutex_exit(&(log_sys->mutex));
+	if(!buf_pool_check_no_pending_io())
+		goto loop;
+
+	/*强制log的checkpoint和归档*/
+	log_archive_all();
+	log_make_checkpoint_at(ut_dulint_max, TRUE);
+
+	mutex_enter(&(log_sys->mutex));
+	lsn = log_sys->lsn;
+	if(ut_dulint_cmp(lsn, log_sys->last_checkpoint_lsn) != 0 || || (srv_log_archive_on 
+		&& ut_dulint_cmp(lsn, ut_dulint_add(log_sys->archived_lsn, LOG_BLOCK_HDR_SIZE)) != 0)){
+			mutex_exit(&(log_sys->mutex));
+			goto loop;
+	}
+
+	arch_log_no = UT_LIST_GET_FIRST(log_sys->log_groups)->archived_file_no;
+
+	if (0 == UT_LIST_GET_FIRST(log_sys->log_groups)->archived_offset)
+		arch_log_no--;
+
+	/*等待archive操作完成*/
+	log_archive_close_groups(TRUE);
+
+	mutex_exit(&(log_sys->mutex));
+
+	/*表数据刷盘*/
+	fil_flush_file_spaces(FIL_TABLESPACE);
+	/*log数据刷盘*/
+	fil_flush_file_spaces(FIL_LOG);
+
+	if(!buf_all_freed)
+		goto loop;
+
+	if (srv_lock_timeout_and_monitor_active)
+		goto loop;
+
+	srv_shutdown_state = SRV_SHUTDOWN_LAST_PHASE;
+
+	fil_write_flushed_lsn_to_data_files(lsn, arch_log_no);	
+	fil_flush_file_spaces(FIL_TABLESPACE);
+
+	ut_print_timestamp(stderr);
+	fprintf(stderr, "  InnoDB: Shutdown completed\n");
+}
+
+ibool log_check_log_recs(byte* buf, ulint len, dulint buf_start_lsn)
+{
+	dulint	contiguous_lsn;
+	dulint	scanned_lsn;
+	byte*	start;
+	byte*	end;
+	byte*	buf1;
+	byte*	scan_buf;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+
+	if (len == 0)
+		return(TRUE);
+
+
+	start = ut_align_down(buf, OS_FILE_LOG_BLOCK_SIZE);
+	end = ut_align(buf + len, OS_FILE_LOG_BLOCK_SIZE);
+
+	buf1 = mem_alloc((end - start) + OS_FILE_LOG_BLOCK_SIZE);
+	scan_buf = ut_align(buf1, OS_FILE_LOG_BLOCK_SIZE);
+
+	ut_memcpy(scan_buf, start, end - start);
+	/*检查记录恢复*/
+	recv_scan_log_recs(TRUE, buf_pool_get_curr_size() - RECV_POOL_N_FREE_BLOCKS * UNIV_PAGE_SIZE,	
+		FALSE, scan_buf, end - start,
+		ut_dulint_align_down(buf_start_lsn,
+		OS_FILE_LOG_BLOCK_SIZE),
+		&contiguous_lsn, &scanned_lsn);
+
+	ut_a(ut_dulint_cmp(scanned_lsn, ut_dulint_add(buf_start_lsn, len)) == 0);
+	ut_a(ut_dulint_cmp(recv_sys->recovered_lsn, scanned_lsn) == 0);
+
+	mem_free(buf1);
+
+	return(TRUE);
+}
+
+/*状态信息输出*/
+void log_print(char*	buf, char*	buf_end)
+{
+	double	time_elapsed;
+	time_t	current_time;
+
+	if (buf_end - buf < 300)
+		return;
+
+	mutex_enter(&(log_sys->mutex));
+
+	buf += sprintf(buf, "Log sequence number %lu %lu\n"
+		"Log flushed up to   %lu %lu\n"
+		"Last checkpoint at  %lu %lu\n",
+		ut_dulint_get_high(log_sys->lsn),
+		ut_dulint_get_low(log_sys->lsn),
+		ut_dulint_get_high(log_sys->written_to_some_lsn),
+		ut_dulint_get_low(log_sys->written_to_some_lsn),
+		ut_dulint_get_high(log_sys->last_checkpoint_lsn),
+		ut_dulint_get_low(log_sys->last_checkpoint_lsn));
+
+	current_time = time(NULL);
+
+	time_elapsed = 0.001 + difftime(current_time,
+		log_sys->last_printout_time);
+	buf += sprintf(buf,
+		"%lu pending log writes, %lu pending chkp writes\n"
+		"%lu log i/o's done, %.2f log i/o's/second\n",
+		log_sys->n_pending_writes,
+		log_sys->n_pending_checkpoint_writes,
+		log_sys->n_log_ios,
+		(log_sys->n_log_ios - log_sys->n_log_ios_old) / time_elapsed);
+
+	log_sys->n_log_ios_old = log_sys->n_log_ios;
+	log_sys->last_printout_time = current_time;
+
+	mutex_exit(&(log_sys->mutex));
+}
+
+/*记录单位时间内的io次数和打印的时刻*/
+void log_refresh_stats(void)
+{
+	log_sys->n_log_ios_old = log_sys->n_log_ios;
+	log_sys->last_printout_time = time(NULL);
+}
 
 
 

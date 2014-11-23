@@ -79,6 +79,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="db0err.h" />
+    <ClInclude Include="fil0fil.h" />
     <ClInclude Include="ha0ha.h" />
     <ClInclude Include="ha0storage.h" />
     <ClInclude Include="hash0hash.h" />
@@ -110,6 +111,7 @@
     <ClInclude Include="ut0wqueque.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="fil0fil.cc" />
     <ClCompile Include="ha0ha.cc" />
     <ClCompile Include="ha0storage.cc" />
     <ClCompile Include="hash0hash.cc" />

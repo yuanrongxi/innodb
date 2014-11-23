@@ -33,22 +33,22 @@ typedef struct log_group_struct
 
 	byte**			file_header_bufs;	/*文件头缓冲区*/
 	
-	byte**			archive_file_header_bufs;
-	ulint			archive_space_id;	/**/
-	ulint			archived_file_no;
-	ulint			archived_offset;
-	ulint			next_archived_file_no;
-	ulint			next_archived_offset;
+	byte**			archive_file_header_bufs;/*归档文件头信息的缓冲区*/
+	ulint			archive_space_id;	/*归档重做日志ID*/
+	ulint			archived_file_no;	/*归档的日志文件编号*/
+	ulint			archived_offset;	/*已经完成归档的偏移量*/
+	ulint			next_archived_file_no;/*下一个归档的文件编号*/
+	ulint			next_archived_offset;/*下一个归档的偏移量*/
 
-	dulint			scanned_lsn;
-	byte*			checkpoint_buf;
+	dulint			scanned_lsn;		/**/
+	byte*			checkpoint_buf;		/*保存checkpoint信息的缓冲区*/
 
 	UT_LIST_NODE_T(log_group_t) log_groups;
 }log_group_t;
 
 typedef struct log_struct
 {
-	byte			pad;
+	byte			pad;				/*使得log_struct对象可以放在通用的cache line中的数据，这个和CPU L1 Cache和数据竞争有和直接关系*/
 	dulint			lsn;				/*log的序列号,实际上是一个日志文件偏移量*/
 	
 	ulint			buf_free;
@@ -67,7 +67,7 @@ typedef struct log_struct
 
 	ulint			buf_next_to_write;	/*下一次开始写入磁盘的buf偏移位置*/
 	dulint			written_to_some_lsn;/**/
-	dulint			written_to_all_lsn;
+	dulint			written_to_all_lsn; /*已经记录在日志文件中的lsn*/
 
 	dulint			flush_lsn;			/*flush的lsn*/
 	ulint			flush_end_offset;
@@ -102,6 +102,7 @@ typedef struct log_struct
 	ulint			archiving_phase;
 	ulint			n_pending_archive_ios;
 	rw_lock_t		archive_lock;
+
 	ulint			archive_buf_size;
 	byte*			archive_buf;
 	os_event_t		archiving_on;
@@ -224,6 +225,50 @@ buffer pool. NOTE: this function may only be called if the calling thread owns
 no synchronization objects! */
 ibool		log_preflush_pool_modified_pages(dulint new_oldest, ibool sync);
 
+/*产生一个checkpoint*/
+ibool		log_checkpoint(ibool sync, ibool write_always);
+
+void		log_make_checkpoint_at(dulint lsn, ibool write_always);
+
+void		logs_empty_and_mark_files_at_shutdown();
+
+void		log_group_read_checkpoint_info(log_group_t* group);
+
+void		log_checkpoint_get_nth_group_info(byte* buf, ulint n, ulint* file_no, ulint* offset);
+
+void		log_groups_write_checkpoint_info();
+
+void		log_reset_first_header_and_checkpoint(byte* hdr_buf, dulint start);
+
+void		log_check_margins();
+
+void		log_group_read_log_seg(ulint type, byte* buf, log_group_t* group, dulint start_lsn, dulint end_lsn);
+
+ulint		log_archive_stop(void);
+
+ulint		log_archive_start(void);
+
+ulint		log_archive_noarchivelog(void);
+
+ulint		log_archive_archivelog(void);
+
+void		log_archived_file_name_gen(char* buf,ulint	id,ulint file_no);
+
+ulint		log_switch_backup_state_on(void);
+
+ulint		log_switch_backup_state_off(void);
+
+void		log_check_margins(void);
+
+ulint		log_switch_backup_state_on(void);
+ulint		log_switch_backup_state_on(void);
+
+/*数据库关闭时调用*/
+void		logs_empty_and_mark_files_at_shutdown(void);
+
+void		log_print(char*	buf, char*	buf_end);
+ibool		log_check_log_recs(byte* buf, ulint len, dulint buf_start_lsn);
+void		log_refresh_stats(void);
 
 #include "log0log.inl"
 
