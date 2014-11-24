@@ -66,7 +66,7 @@ void		fil_init(ulint max_open);
 
 void		fil_ibuf_init_at_db_start();
 
-void		fil_sapce_create(char* name, ulint id, ulint purpose);
+void		fil_space_create(char* name, ulint id, ulint purpose);
 
 void		fil_space_truncate_start(ulint id, ulint trunc_len);
 /*在最后一个fil_node上清除数据(数据用0填充),清除长度为size_increase*/

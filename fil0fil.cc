@@ -366,7 +366,7 @@ void fil_read_flushed_lsn_and_arch_log_no(os_file_t data_file, ibool one_read_al
 		*max_arch_log_no = arch_log_no;
 }
 
-void fil_sapce_create(char* name, ulint id, ulint purpose)
+void fil_space_create(char* name, ulint id, ulint purpose)
 {
 	fil_space_t* space;
 	char* name2;
