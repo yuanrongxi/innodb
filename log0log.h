@@ -123,7 +123,7 @@ extern log_t*	log_sys;
 #define LOG_ARCHIVE			11122331
 #define LOG_RECOVER			98887331
 
-/*构建一个lsn序号*/
+/*lsn序号初始化值*/
 #define LOG_START_LSN				ut_dulint_create(0, 16 * OS_FILE_LOG_BLOCK_SIZE)
 /*log的大小*/
 #define LOG_BUFFER_SIZE				(srv_log_buffer_size * UNIV_PAGE_SIZE)		
@@ -189,7 +189,7 @@ extern log_t*	log_sys;
 void log_fsp_current_free_limit_set_and_checkpoint(ulint limit);
 
 /*将str写入到log_sys当中，必须和buf_free凑成512的块，否则返回失败*/
-UNIV_INLINE dulint	log_reserve_and_write_fast(byte*	str, ulint	len, dulint* start_lsn, ibool* success);
+UNIV_INLINE dulint	log_reserve_and_write_fast(byte* str, ulint	len, dulint* start_lsn, ibool* success);
 UNIV_INLINE void	log_release();
 UNIV_INLINE VOID	log_free_check();
 UNIV_INLINE dulint	log_get_lsn();
