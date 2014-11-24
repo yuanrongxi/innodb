@@ -51,42 +51,41 @@ typedef struct log_struct
 	byte			pad;				/*使得log_struct对象可以放在通用的cache line中的数据，这个和CPU L1 Cache和数据竞争有和直接关系*/
 	dulint			lsn;				/*log的序列号,实际上是一个日志文件偏移量*/
 	
-	ulint			buf_free;
+	ulint			buf_free;			/*buf可以写的位置*/
 	
 	mutex_t			mutex;				/*log保护的mutex*/
 	byte*			buf;				/*log缓冲区*/
 	ulint			buf_size;			/*log缓冲区长度*/
 	ulint			max_buf_free;		/*在log buffer刷盘后，推荐buf_free的最大值，超过这个值会被强制刷盘*/
 	
-	ulint			old_buf_free;		/*上次写时buf_free的值*/
-	dulint			old_lsn;			/*上次写时的lsn*/
+	ulint			old_buf_free;		/*上次写时buf_free的值,用于调试*/
+	dulint			old_lsn;			/*上次写时的lsn,用于调试*/
 
 	ibool			check_flush_or_checkpoint; /*需要日志写盘或者是需要刷新一个log checkpoint的标识*/
 
-	UT_LIST_BASE_NODE_T(log_group_t) log_groups;
-
 	ulint			buf_next_to_write;	/*下一次开始写入磁盘的buf偏移位置*/
-	dulint			written_to_some_lsn;/**/
+	dulint			written_to_some_lsn;/*第一个group刷完成是的lsn*/
 	dulint			written_to_all_lsn; /*已经记录在日志文件中的lsn*/
 
 	dulint			flush_lsn;			/*flush的lsn*/
-	ulint			flush_end_offset;
+	ulint			flush_end_offset;	/*最后一次log file刷盘时的buf_free，也就是最后一次flush的末尾偏移量*/
 	ulint			n_pending_writes;	/*正在调用fil_flush的个数*/
 
-	os_event_t		no_flush_event;		/*处于flush过程中的信号等待*/
+	os_event_t		no_flush_event;		/*所有fil_flush完成后才会触发这个信号,等待所有的goups刷盘完成*/
 
-	ibool			one_flushed;		/*一个log group被刷盘后这个值会设置成TRUE*/
-	os_event_t		one_flushed_event;
+	ibool			one_flushed;			/*一个log group被刷盘后这个值会设置成TRUE*/
+	os_event_t		one_flushed_event;      /*只要有一个group flush完成就会触发这个信号*/
 
-	ulint			n_log_ios;
-	ulint			n_log_ios_old;
+	ulint			n_log_ios;				/*log系统的io操作次数*/
+	ulint			n_log_ios_old;			/*上一次统计时的io操作次数*/
 	time_t			last_printout_time;
 
-	ulint			max_modified_age_async;
-	ulint			max_modified_age_sync;
+	ulint			max_modified_age_async;	/*异步日志文件刷盘的阈值*/
+	ulint			max_modified_age_sync;	/*同步日志文件刷盘的阈值*/
 	ulint			adm_checkpoint_interval;
-	ulint			max_checkpoint_age_async;
-	ulint			max_checkpoint_age;
+	ulint			max_checkpoint_age_async;/*异步建立checkpoint的阈值*/
+	ulint			max_checkpoint_age;		 /*强制建立checkpoint的阈值*/
+
 	dulint			next_checkpoint_no;
 	dulint			last_checkpoint_lsn;
 	dulint			next_checkpoint_lsn;
@@ -109,6 +108,8 @@ typedef struct log_struct
 
 	ibool			online_backup_state;	/*是否在backup*/
 	dulint			online_backup_lsn;		/*backup时的lsn*/
+
+	UT_LIST_BASE_NODE_T(log_group_t) log_groups;
 }log_t;
 
 extern	ibool	log_do_write;
