@@ -1017,7 +1017,7 @@ static void log_io_complete_checkpoint(log_group_t* group)
 }
 
 /*设置checkpoint位置*/
-static void log_checkpoint_get_nth_group_info(byte* buf, ulint n, ulint file_no, ulint offset)
+static void log_checkpoint_set_nth_group_info(byte* buf, ulint n, ulint file_no, ulint offset)
 {
 	ut_ad(n < LOG_MAX_N_GROUPS);
 	/*将checkpoint的文件和对应位置写入buf当中*/

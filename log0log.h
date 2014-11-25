@@ -14,7 +14,7 @@
 #define LOG_MAX_N_GROUPS	32
 
 /*archive的状态*/
-#define LOG_ARCH_ON		71
+#define LOG_ARCH_ON			71
 #define LOG_ARCH_STOPPING	72
 #define LOG_ARCH_STOPPING2	73
 #define LOG_ARCH_STOPPED	74
@@ -25,11 +25,11 @@ typedef struct log_group_struct
 	ulint			id;					/*log group id*/
 	ulint			n_files;			/*group包含的日志文件个数*/
 	ulint			file_size;			/*日志文件大小，包括文件头*/
-	ulint			space_id;			/*group对应的space id*/
+	ulint			space_id;			/*group对应的fil_space的id*/
 	ulint			state;				/*log group状态，LOG_GROUP_OK、LOG_GROUP_CORRUPTED*/
-	dulint			lsn;				/*log group的lsn坐标*/
+	dulint			lsn;				/*log group的lsn*/
 	dulint			lsn_offset;			/*lsn的偏移量*/
-	ulint			n_pending_writes;	/*本group 刷盘所填充的字节数*/
+	ulint			n_pending_writes;	/*本group 正在执行fil_flush的个数*/
 
 	byte**			file_header_bufs;	/*文件头缓冲区*/
 	
@@ -40,15 +40,15 @@ typedef struct log_group_struct
 	ulint			next_archived_file_no;/*下一个归档的文件编号*/
 	ulint			next_archived_offset;/*下一个归档的偏移量*/
 
-	dulint			scanned_lsn;		/**/
-	byte*			checkpoint_buf;		/*保存checkpoint信息的缓冲区*/
+	dulint			scanned_lsn;		
+	byte*			checkpoint_buf;		/*本log group保存checkpoint信息的缓冲区*/
 
 	UT_LIST_NODE_T(log_group_t) log_groups;
 }log_group_t;
 
 typedef struct log_struct
 {
-	byte			pad;				/*使得log_struct对象可以放在通用的cache line中的数据，这个和CPU L1 Cache和数据竞争有和直接关系*/
+	byte			pad[64];			/*使得log_struct对象可以放在通用的cache line中的数据，这个和CPU L1 Cache和数据竞争有直接关系*/
 	dulint			lsn;				/*log的序列号,实际上是一个日志文件偏移量*/
 	
 	ulint			buf_free;			/*buf可以写的位置*/
@@ -91,7 +91,7 @@ typedef struct log_struct
 	dulint			next_checkpoint_lsn;
 	ulint			n_pending_checkpoint_writes;
 	rw_lock_t		checkpoint_lock;	/*checkpoint的rw_lock_t,在checkpoint的时候，是独占这个latch*/
-	byte*			checkpoint_buf;
+	byte*			checkpoint_buf;		/*checkpoint信息存储的buf*/
 
 	ulint			archiving_state;
 	dulint			archived_lsn;
