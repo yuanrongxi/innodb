@@ -66,9 +66,9 @@ struct recv_struct
 typedef struct recv_addr_struct recv_addr_t;
 struct recv_addr_struct
 {
-	ulint			state;
-	ulint			space;
-	ulint			page_no;
+	ulint			state;		/*×´Ì¬£¬RECV_NOT_PROCESSED¡¢RECV_BEING_PROCESSED¡¢RECV_PROCESSED*/	
+	ulint			space;		/*spaceµÄID*/
+	ulint			page_no;	/*Ò³ÐòºÅ*/
 	UT_LIST_BASE_NODE_T(recv_t) rec_list;
 	hash_node_t		addr_hash;
 };
