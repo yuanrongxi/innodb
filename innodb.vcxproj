@@ -75,6 +75,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="log0log.inl" />
+    <None Include="log0recv.inl" />
     <None Include="univ.h" />
   </ItemGroup>
   <ItemGroup>
@@ -84,6 +85,7 @@
     <ClInclude Include="ha0storage.h" />
     <ClInclude Include="hash0hash.h" />
     <ClInclude Include="log0log.h" />
+    <ClInclude Include="log0recv.h" />
     <ClInclude Include="mach0data.h" />
     <ClInclude Include="mem0dbg.h" />
     <ClInclude Include="mem0mem.h" />
@@ -116,6 +118,7 @@
     <ClCompile Include="ha0storage.cc" />
     <ClCompile Include="hash0hash.cc" />
     <ClCompile Include="log0log.cc" />
+    <ClCompile Include="log0recv.cc" />
     <ClCompile Include="mach0data.cc" />
     <ClCompile Include="mem0dbg.cc" />
     <ClCompile Include="mem0mem.cc" />

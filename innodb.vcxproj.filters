@@ -37,6 +37,9 @@
     <None Include="log0log.inl">
       <Filter>log</Filter>
     </None>
+    <None Include="log0recv.inl">
+      <Filter>log</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -132,6 +135,9 @@
     <ClInclude Include="fil0fil.h">
       <Filter>fil</Filter>
     </ClInclude>
+    <ClInclude Include="log0recv.h">
+      <Filter>log</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -214,6 +220,9 @@
     </ClCompile>
     <ClCompile Include="fil0fil.cc">
       <Filter>fil</Filter>
+    </ClCompile>
+    <ClCompile Include="log0recv.cc">
+      <Filter>log</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
