@@ -69,7 +69,7 @@ UNIV_INLINE void log_block_set_checkpoint_no(byte* log_block, dulint no)
 	mach_write_to_4(log_block + LOG_BLOCK_CHECKPOINT_NO, no.low);
 }
 
-/*获得lsn的block number*/
+/*获得lsn对应的block number*/
 UNIV_INLINE ulint log_block_convert_lsn_to_no(dulint lsn)
 {
 	ulint no; /* 0 < no and no < 1G*/
