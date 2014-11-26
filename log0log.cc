@@ -893,7 +893,7 @@ loop:
 	/*在最后一块设置了checkpoint no*/
 	log_block_set_checkpoint_no(log_sys->buf + area_end - OS_FILE_LOG_BLOCK_SIZE, log_sys->next_checkpoint_no);
 
-	/*为什么将最后一个block向后移动,防止下次写不会写在最后flush的这个块上，因为buf_free 和flush_end_offset做了增长？？*/
+	/*为什么将最后一个block向后移动,有可能最后一个block并没有满，防止下次写不会写在最后flush的这个块上，因为buf_free 和flush_end_offset做了增长？？*/
 	ut_memcpy(log_sys->buf + area_end, log_sys->buf + area_end - OS_FILE_LOG_BLOCK_SIZE, OS_FILE_LOG_BLOCK_SIZE);
 	log_sys->buf_free += OS_FILE_LOG_BLOCK_SIZE;
 	log_sys->flush_end_offset = log_sys->buf_free;
