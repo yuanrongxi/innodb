@@ -10,7 +10,7 @@
 /*********************************************api************************************/
 /*获得checkpoint信息*/
 ibool				recv_read_cp_info_for_backup(byte* hdr, dulint* lsn, ulint* offset, ulint fsp_limit, dulint* cp_no, dulint* cp_no, dulint* first_header_lsn);
-
+/*扫描一段log片段，返回有效block的n_byte_scanned长度和scanned_checkpoint_no*/
 void				recv_scan_log_seg_for_backup(byte* buf, ulint buf_len, dulint* scanned_lsn, ulint* scanned_checkpoint_no, ulint n_byte_scanned);
 
 UNIV_INLINE ibool	recv_recovery_is_on();

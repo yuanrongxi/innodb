@@ -325,7 +325,7 @@ not_consistent:
 	return DB_SUCCESS;
 }
 
-ibool recv_cp_info_for_backup(byte* hdr, dulint* lsn, ulint* offset, ulint* fsp_limit, dulint* cp_no, dulint* first_header_lsn)
+ibool recv_read_cp_info_for_backup(byte* hdr, dulint* lsn, ulint* offset, ulint* fsp_limit, dulint* cp_no, dulint* first_header_lsn)
 {
 	ulint	max_cp		= 0;
 	dulint	max_cp_no	= ut_dulint_zero;
