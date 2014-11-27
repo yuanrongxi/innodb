@@ -485,6 +485,84 @@ static recv_addr_t* recv_get_fil_add_struct(ulint space, ulint page_no)
 	return recv_addr;
 }
 
+static void recv_add_to_hash_table(byte type, ulint space, ulint page_no, byte* body, byte* rec_end, dulint start_lsn, dulint end_lsn)
+{
+	recv_t*		recv;
+	ulint		len;
+	recv_data_t*	recv_data;
+	recv_data_t**	prev_field;
+	recv_addr_t*	recv_addr;
+
+	ut_a(space == 0); 
+
+	len = rec_end = body;
+
+	recv = mem_heap_alloc(recv_sys->heap, sizeof(recv_t));
+	recv->type = type;
+	recv->len = rec_end - body;
+	recv->start_lsn = end_lsn;
+
+	/*hash table中没有这个单元，新建一个recv_addr,并将recv加入到其中*/
+	recv_addr = recv_get_fil_add_struct(space, page_no);
+	if(recv_addr == NULL){
+		recv_addr = mem_heap_alloc(recv_sys->heap, sizeof(recv_addr_t));
+		recv_addr->space = space;
+		recv_addr->page_no = page_no;
+		recv_addr->state = RECV_NOT_PROCESSED;
+
+		UT_LIST_INIT(recv_addr->rec_list);
+		HASH_INSERT(recv_addr_t, addr_hash, recv_sys->addr_hash, recv_fold(space, page_no), recv_addr);
+	}
+
+	UT_LIST_ADD_LAST(rec_list, recv_addr->rec_list, recv);
+	prev_field = &(recv->data);
+
+	while(rec_end > body){
+		len = rec_end - body;
+		if(len > RECV_DATA_BLOCK_SIZE)
+			len = RECV_DATA_BLOCK_SIZE;
+
+		recv_data = mem_heap_alloc(recv_sys->heap, sizeof(recv_data_t) + len);
+		*prev_field = recv_data;
+		/*将数据填补到recv_data的后面空间上*/
+		ut_memcpy(((byte*)recv_data) + sizeof(recv_data_t), body, len);
+
+		prev_field = &(recv_data->next);
+		body += len;
+	}
+
+	*prev_field = NULL;
+}
+
+/*从recv中将记录数据读取到buf当中*/
+static void recv_data_copy_to_buf(byte* buf, recv_t* recv)
+{
+	recv_data_t*	recv_data;
+	ulint		part_len;
+	ulint		len;
+
+	len = recv->len;
+	recv_data = recv->data;
+	while(len > 0){
+		if(len > RECV_DATA_BLOCK_SIZE)
+			part_len = RECV_DATA_BLOCK_SIZE;
+		else
+			part_len = len;
+
+		ut_memcpy(buf, ((byte*)recv_data) + sizeof(recv_data_t), part_len);
+		buf += part_len;
+		len -= part_len;
+
+		recv_data = recv_data->next;
+	}
+}
+
+/*当page的LSN小于日志记录的LSN,将hash log中的记录写入到page当中*/
+void recv_recover_page(ibool recover_backup, ibool just_read_in, page_t* page, ulint space, ulint page_no)
+{
+
+}
+
 
 
 
