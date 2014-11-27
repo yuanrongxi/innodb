@@ -16,7 +16,7 @@ void				recv_scan_log_seg_for_backup(byte* buf, ulint buf_len, dulint* scanned_l
 UNIV_INLINE ibool	recv_recovery_is_on();
 
 UNIV_INLINE ibool	recv_recovery_from_backup_is_on();
-
+/*将space,page_no对应的recv_addr中的日志数据写入到page页当中*/
 void				recv_recover_page(ibool recover_backup, ibool just_read_in, page_t* page, ulint space, ulint page_no);
 
 ulint				recv_recovery_from_checkpoint_start(ulint type, dulint limit_lsn, dulint min_flushed_lsn, dulint max_flushed_lsn);
@@ -33,7 +33,7 @@ void				recv_reset_log_file_for_backup(char* log_dir, ulint n_log_files, ulint l
 void				recv_sys_create();
 
 void				recv_sys_init(ibool recover_from_backup, ulint available_memory);
-
+/*将recv_sys->addr_hash中的recv_data_t的日志全部应用到对应的page中*/
 void				recv_apply_hashed_log_recs(ibool allow_ibuf);
 
 void				recv_apply_log_recs_for_backup(ulint n_data_files, char** data_files, ulint* file_sizes);
@@ -56,10 +56,11 @@ struct recv_data_struct
 typedef struct recv_struct recv_t;
 struct recv_struct
 {
-	byte			type;
-	recv_data_t*	data;
-	dulint			start_lsn;
-	dulint			end_lsn;
+	byte			type;			/*log类型*/
+	ulint			len;			/*当前记录数据长度*/
+	recv_data_t*	data;			/*当前的记录数据list*/
+	dulint			start_lsn;		/*mtr起始lsn*/	
+	dulint			end_lsn;		/*mtr结尾lns*/
 	UT_LIST_NODE_T(recv_t)	rec_list;
 };
 
@@ -77,8 +78,8 @@ typedef struct recv_sys_struct recv_sys_t;
 struct recv_sys_struct
 {
 	mutex_t			mutex;
-	ibool			apply_log_recs;
-	ibool			apply_batch_on;
+	ibool			apply_log_recs;	/*正在应用log record到page中*/
+	ibool			apply_batch_on; /*批量应用log record标志*/
 	
 	dulint			lsn;
 	ulint			last_log_buf_size;

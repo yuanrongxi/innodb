@@ -470,7 +470,7 @@ UNIV_INLINE ulint recv_fold(ulint space, ulint page_no)
 }
 
 /*通过space 和page no在addr_hash中查找recv_addr*/
-static recv_addr_t* recv_get_fil_add_struct(ulint space, ulint page_no)
+static recv_addr_t* recv_get_fil_addr_struct(ulint space, ulint page_no)
 {
 	recv_addr_t*  recv_addr;
 	recv_addr = HASH_GET_FIRST(recv_sys->addr_hash, recv_hash(space, page_no));
@@ -560,8 +560,338 @@ static void recv_data_copy_to_buf(byte* buf, recv_t* recv)
 /*当page的LSN小于日志记录的LSN,将hash log中的记录写入到page当中*/
 void recv_recover_page(ibool recover_backup, ibool just_read_in, page_t* page, ulint space, ulint page_no)
 {
+	buf_block_t*	block;
+	recv_addr_t*	recv_addr;
+	recv_t*		recv;
+	byte*		buf;
+	dulint		start_lsn;
+	dulint		end_lsn;
+	dulint		page_lsn;
+	dulint		page_newest_lsn;
+	ibool		modification_to_page;
+	ibool		success;
+	mtr_t		mtr;
 
+	mutex_enter(SYS_MUTEX);
+
+	if(recv_sys->apply_log_recs == FALSE){
+		mutex_exit(SYS_MUTEX);
+		return;
+	}
+
+	/*获得recv地址*/
+	recv_addr = recv_get_fil_addr_struct(space, page_no);
+	if(recv_addr == NULL || recv_addr->state == RECV_BEING_PROCESSED || recv_addr->state == RECV_PROCESSED){ /*recv_addr已经开始处理或者已经处理了*/
+		mutex_exit(SYS_MUTEX);
+		return;
+	}
+
+	/*更改recv_addr的状态，变成开始处理的状态*/
+	recv_addr->state = RECV_BEING_PROCESSED;
+	mutex_exit(SYS_MUTEX);
+	
+	/*开始以一个mtr*/
+	mtr_start(&mtr);
+	mtr_set_log_mode(&mtr, MTR_LOG_NONE);
+	if(!recover_backup){
+		block = buf_block_align(page);
+		if(just_read_in) /*转移block->lock的归属线程*/
+			rw_lock_x_lock_move_ownership(&(block->lock));
+
+		success = buf_page_get_known_nowait(RW_X_LATCH, page, BUF_KEEP_OLD, IB__FILE__, __LINE__, &mtr);
+		ut_a(success);
+
+		buf_page_dbg_add_level(page, SYNC_NO_ORDER_CHECK);
+	}
+
+	/*获得page的lsn*/
+	page_lsn = mach_read_from_8(page + FIL_PAGE_LSN);
+	if (!recover_backup) {
+		page_newest_lsn = buf_frame_get_newest_modification(page);
+		if(!ut_dulint_is_zero(page_newest_lsn))
+			page_lsn = page_newest_lsn;
+	}
+	else
+		page_newest_lsn = ut_dulint_zero;
+
+	modification_to_page = FALSE;
+
+	recv = UT_LIST_GET_FIRST(recv_addr->rec_list);
+	while(recv){
+		end_lsn = recv->end_lsn;
+		/*从recv拷贝数据*/
+		if(recv->end_lsn > RECV_DATA_BLOCK_SIZE){
+			buf = mem_alloc(recv->len);
+			recv_data_copy_to_buf(buf, recv);
+		}
+		else
+			buf = ((byte*)recv->data) + sizeof(recv_data_t);
+
+		if(recv->type == MLOG_INIT_FILE_PAGE || recv->type == MLOG_FULL_PAGE){
+			page_lsn = page_newest_lsn;
+			mach_write_to_8(page + UNIV_PAGE_SIZE - FIL_PAGE_END_LSN, ut_dulint_zero);
+			mach_write_to_8(page + FIL_PAGE_LSN, ut_dulint_zero);
+		}
+
+		if (ut_dulint_cmp(recv->start_lsn, page_lsn) >= 0) {
+			if (!modification_to_page) {
+				modification_to_page = TRUE;
+				start_lsn = recv->start_lsn;
+			}
+
+			if (log_debug_writes)
+				fprintf(stderr, "InnoDB: Applying log rec type %lu len %lu to space %lu page no %lu\n",
+					(ulint)recv->type, recv->len, recv_addr->space, recv_addr->page_no);
+
+			recv_parse_or_apply_log_rec_body(recv->type, buf, buf + recv->len, page, &mtr);
+			mach_write_to_8(page + UNIV_PAGE_SIZE - FIL_PAGE_END_LSN, ut_dulint_add(recv->start_lsn, recv->len));
+			mach_write_to_8(page + FIL_PAGE_LSN, ut_dulint_add(recv->start_lsn, recv->len));
+		}
+
+		if (recv->len > RECV_DATA_BLOCK_SIZE)
+			mem_free(buf);
+
+		recv = UT_LIST_GET_NEXT(rec_list, recv);
+	}
+
+	mutex_enter(SYS_MUTEX);
+	recv_addr->state = RECV_PROCESSED;
+
+	ut_a(recv_sys->n_addrs);
+	recv_sys->n_addrs --;
+	mutex_exit(SYS_MUTEX);
+
+	if(!recover_backup && modification_to_page)
+		buf_flush_recv_note_modification(block, start_lsn, end_lsn);
+
+	mtr.modifications = FALSE;
+	mtr_commit(&mtr);
 }
+
+static ulint recv_read_in_area(ulint space, ulint page_no)
+{
+	recv_addr_t* recv_addr;
+	ulint	page_nos[RECV_READ_AHEAD_AREA];
+	ulint	low_limit;
+	ulint	n;
+
+	low_limit = page_no - (page_no % RECV_READ_AHEAD_AREA);
+	n = 0;
+
+	for (page_no = low_limit; page_no < low_limit + RECV_READ_AHEAD_AREA; page_no++) {
+		/*通过space和page_no获得recv_addr*/
+		recv_addr = recv_get_fil_addr_struct(space, page_no);
+		if (recv_addr && !buf_page_peek(space, page_no)) {
+			mutex_enter(&(recv_sys->mutex));
+
+			if (recv_addr->state == RECV_NOT_PROCESSED) { /*找到RECV_NOT_PROCESSED状态的recv_addr*/
+				recv_addr->state = RECV_BEING_READ;
+	
+				page_nos[n] = page_no;
+				n++;
+			}
+			
+			mutex_exit(&(recv_sys->mutex));
+		}
+	}
+
+	buf_read_recv_pages(FALSE, space, page_nos, n);
+
+	return(n);
+}
+
+void recv_apply_hashed_log_recs(ibool allow_ibuf)
+{
+	recv_addr_t* recv_addr;
+	page_t*	page;
+	ulint	i;
+	ulint	space;
+	ulint	page_no;
+	ulint	n_pages;
+	ibool	has_printed	= FALSE;
+	mtr_t	mtr;
+
+loop:
+	mutex_enter(&(recv_sys->mutex));
+
+	if (recv_sys->apply_batch_on) {
+		mutex_exit(&(recv_sys->mutex));
+		os_thread_sleep(500000);
+		goto loop;
+	}
+
+	if (!allow_ibuf) {
+		ut_ad(mutex_own(&(log_sys->mutex)));
+		recv_no_ibuf_operations = TRUE;
+	} 
+	else
+		ut_ad(!mutex_own(&(log_sys->mutex)));
+
+	
+	recv_sys->apply_log_recs = TRUE;
+	recv_sys->apply_batch_on = TRUE;
+
+	for (i = 0; i < hash_get_n_cells(recv_sys->addr_hash); i++) {
+		recv_addr = HASH_GET_FIRST(recv_sys->addr_hash, i);
+
+		while (recv_addr) {
+			space = recv_addr->space;
+			page_no = recv_addr->page_no;
+
+			if (recv_addr->state == RECV_NOT_PROCESSED) {
+				if (!has_printed) {
+					ut_print_timestamp(stderr);
+					fprintf(stderr, 
+						"  InnoDB: Starting an apply batch of log records to the database...\n"
+						"InnoDB: Progress in percents: ");
+					has_printed = TRUE;
+				}
+				
+				mutex_exit(&(recv_sys->mutex));
+
+				if (buf_page_peek(space, page_no)) {
+					mtr_start(&mtr);
+					page = buf_page_get(space, page_no, RW_X_LATCH, &mtr);
+
+					buf_page_dbg_add_level(page, SYNC_NO_ORDER_CHECK);
+					/*将recv_addr_t上的log应用到对应的页上*/
+					recv_recover_page(FALSE, FALSE, page, space, page_no);
+
+					mtr_commit(&mtr);
+				} 
+				else
+					recv_read_in_area(space, page_no);
+
+				mutex_enter(&(recv_sys->mutex));
+			}
+
+			recv_addr = HASH_GET_NEXT(addr_hash, recv_addr);
+		}
+
+		if (has_printed && (i * 100) / hash_get_n_cells(recv_sys->addr_hash) != ((i + 1) * 100) / hash_get_n_cells(recv_sys->addr_hash))
+			fprintf(stderr, "%lu ", (i * 100) / hash_get_n_cells(recv_sys->addr_hash));
+
+	}
+	/* Wait until all the pages have been processed */
+	while (recv_sys->n_addrs != 0) {
+		mutex_exit(&(recv_sys->mutex));
+		os_thread_sleep(500000);
+		mutex_enter(&(recv_sys->mutex));
+	}	
+
+	if (has_printed)
+	        fprintf(stderr, "\n");
+
+	if (!allow_ibuf) {
+		/* Flush all the file pages to disk and invalidate them in
+		the buffer pool */
+
+		mutex_exit(&(recv_sys->mutex));
+		mutex_exit(&(log_sys->mutex));
+
+		n_pages = buf_flush_batch(BUF_FLUSH_LIST, ULINT_MAX,
+								ut_dulint_max);
+		ut_a(n_pages != ULINT_UNDEFINED);
+		
+		buf_flush_wait_batch_end(BUF_FLUSH_LIST);
+
+		buf_pool_invalidate();
+
+		mutex_enter(&(log_sys->mutex));
+		mutex_enter(&(recv_sys->mutex));
+
+		recv_no_ibuf_operations = FALSE;
+	}
+
+	recv_sys->apply_log_recs = FALSE;
+	recv_sys->apply_batch_on = FALSE;
+			
+	recv_sys_empty_hash();
+
+	if (has_printed)
+		fprintf(stderr, "InnoDB: Apply batch completed\n");
+
+	mutex_exit(&(recv_sys->mutex));
+}
+
+void recv_apply_log_recs_for_backup(ulint n_data_files, char** data_files, ulint* file_sizes)
+{
+	recv_addr_t*	recv_addr;
+	os_file_t	data_file;
+	ulint		n_pages_total	= 0;
+	ulint		nth_file	= 0;
+	ulint		nth_page_in_file= 0;
+	byte*		page;
+	ibool		success;
+	ulint		i;
+
+	recv_sys->apply_log_recs = TRUE;
+	recv_sys->apply_batch_on = TRUE;
+
+	page = buf_pool->frame_zero;
+
+	/*计算page总数*/
+	for(i = 0; i < n_data_files; i ++)
+		n_pages_total += file_sizes[i];
+
+	printf("InnoDB: Starting an apply batch of log records to the database...\n"
+		"InnoDB: Progress in percents: ");
+
+	for(i = 0; i < n_pages_total; i ++){
+		if(i == 0 || nth_page_in_file == file_sizes[nth_file]){
+			if(i != 0){
+				nth_file++;
+				nth_page_in_file = 0;
+				os_file_flush(data_file);
+				os_file_close(data_file);
+			}
+
+			data_file = os_file_create_simple(data_files[nth_file], OS_FILE_OPEN, OS_FILE_READ_WRITE, success);
+			if(!success){
+				printf("InnoDB: Error: cannot open %lu'th data file %s\n", nth_file);
+				exit(1);
+			}
+		}
+
+		/*获得recv_addr*/
+		recv_addr = recv_get_fil_addr_struct(0, i);
+		if(recv_addr != NULL){
+			/*从文件中读取一个page缓冲区数据*/
+			success = os_file_read(data_file, page, (nth_page_in_file << UNIV_PAGE_SIZE_SHIFT)
+				& 0xFFFFFFFF, nth_page_in_file >> (32 - UNIV_PAGE_SIZE_SHIFT), UNIV_PAGE_SIZE);
+			if(!success){
+				printf("InnoDB: Error: cannot write page no %lu to %lu'th data file %s\n",nth_page_in_file, nth_file);
+				exit(1);
+			}
+
+			buf_page_init_for_backup_restore(0, i, buf_block_align(page));
+			/*将recv_addr上的log应用到对应的页上*/
+			recv_recover_page(TRUE, FALSE, page, 0, i);
+
+			buf_flush_init_for_writing(page, mach_read_from_8(page + FIL_PAGE_LSN), 0, i);
+
+			success = os_file_write(data_files[nth_file],
+				data_file, page,
+				(nth_page_in_file << UNIV_PAGE_SIZE_SHIFT)
+				& 0xFFFFFFFF,
+				nth_page_in_file >> (32 - UNIV_PAGE_SIZE_SHIFT), 
+				UNIV_PAGE_SIZE);
+		}
+
+		if((100 * i) / n_pages_total != (100 * (i + 1)) / n_pages_total){
+			printf("%lu ", (100 * i) / n_pages_total);
+			fflush(stdout);
+		}
+
+		nth_page_in_file++;
+	}
+
+	os_file_flush(data_file);
+	os_file_close(data_file);
+	/*清空日志恢复的HASH TABLE*/
+	recv_sys_empty_hash();
+}
+
 
 
 
