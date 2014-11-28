@@ -977,26 +977,19 @@ void recv_compare_spaces(ulint space1, ulint space2, ulint n_pages)
 			ut_memcpy(page, frame, UNIV_PAGE_SIZE);
 		} else {
 			/* Read it from file */
-			fil_io(OS_FILE_READ, TRUE, space1, page_no, 0,
-				UNIV_PAGE_SIZE, page, NULL);
+			fil_io(OS_FILE_READ, TRUE, space1, page_no, 0, UNIV_PAGE_SIZE, page, NULL);
 		}
 
-		frame = buf_page_get_gen(space2, page_no, RW_S_LATCH, NULL,
-			BUF_GET_IF_IN_POOL,
-			IB__FILE__, __LINE__,
-			&mtr);
+		frame = buf_page_get_gen(space2, page_no, RW_S_LATCH, NULL, BUF_GET_IF_IN_POOL, IB__FILE__, __LINE__, &mtr);
 		if (frame) {
 			buf_page_dbg_add_level(frame, SYNC_NO_ORDER_CHECK);
 			ut_memcpy(replica, frame, UNIV_PAGE_SIZE);
 		} else {
 			/* Read it from file */
-			fil_io(OS_FILE_READ, TRUE, space2, page_no, 0,
-				UNIV_PAGE_SIZE, replica, NULL);
+			fil_io(OS_FILE_READ, TRUE, space2, page_no, 0, UNIV_PAGE_SIZE, replica, NULL);
 		}
 
-		recv_check_identical(page + FIL_PAGE_DATA,
-			replica + FIL_PAGE_DATA,
-			PAGE_HEADER + PAGE_MAX_TRX_ID - FIL_PAGE_DATA);
+		recv_check_identical(page + FIL_PAGE_DATA, replica + FIL_PAGE_DATA, PAGE_HEADER + PAGE_MAX_TRX_ID - FIL_PAGE_DATA);
 
 		recv_check_identical(page + PAGE_HEADER + PAGE_MAX_TRX_ID + 8,
 			replica + PAGE_HEADER + PAGE_MAX_TRX_ID + 8,
