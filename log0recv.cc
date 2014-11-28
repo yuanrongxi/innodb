@@ -727,7 +727,7 @@ loop:
 	else
 		ut_ad(!mutex_own(&(log_sys->mutex)));
 
-	
+	/*标识正在批量应用日志*/
 	recv_sys->apply_log_recs = TRUE;
 	recv_sys->apply_batch_on = TRUE;
 
@@ -872,8 +872,7 @@ void recv_apply_log_recs_for_backup(ulint n_data_files, char** data_files, ulint
 
 			success = os_file_write(data_files[nth_file],
 				data_file, page,
-				(nth_page_in_file << UNIV_PAGE_SIZE_SHIFT)
-				& 0xFFFFFFFF,
+				(nth_page_in_file << UNIV_PAGE_SIZE_SHIFT) & 0xFFFFFFFF,
 				nth_page_in_file >> (32 - UNIV_PAGE_SIZE_SHIFT), 
 				UNIV_PAGE_SIZE);
 		}
@@ -891,6 +890,245 @@ void recv_apply_log_recs_for_backup(ulint n_data_files, char** data_files, ulint
 	/*清空日志恢复的HASH TABLE*/
 	recv_sys_empty_hash();
 }
+
+static void recv_update_replicate(byte type, ulint space, ulint page_no, byte* body, byte* end_ptr)
+{
+	page_t*	replica;
+	mtr_t	mtr;
+	byte*	ptr;
+
+	mtr_start(&mtr);
+	mtr_set_log_mode(&mtr, MTR_LOG_NONE);
+
+	replica = buf_page_get(space + RECV_REPLICA_SPACE_ADD, page_no, RW_X_LATCH, &mtr);
+	buf_page_dbg_add_level(replica, SYNC_NO_ORDER_CHECK);
+
+	ptr = recv_parse_or_apply_log_rec_body(type, body, end_ptr, replica, &mtr);
+	ut_a(ptr == end_ptr);
+
+	buf_flush_recv_note_modification(buf_block_align(replica), log_sys->old_lsn, log_sys->old_lsn);
+
+	mtr.modifications = FASLE;
+
+	mtr_commit(&mtr);
+}
+
+static void recv_check_identical(byte* str1, byte* str2, ulint len)
+{
+	ulint i;
+	for(i = 0; i < len; i ++){
+		if (str1[i] != str2[i]) {
+			fprintf(stderr, "Strings do not match at offset %lu\n", i);
+
+			ut_print_buf(str1 + i, 16);
+			fprintf(stderr, "\n");
+			ut_print_buf(str2 + i, 16);
+
+			ut_error;
+		}
+	}
+}
+
+static void recv_compare_relicate(ulint page, ulint page_no)
+{
+	page_t*	replica;
+	page_t*	page;
+	mtr_t	mtr;
+
+	mtr_start(&mtr);
+
+	mutex_enter(&(buf_pool->mutex));
+	page = buf_page_hash_get(space, page_no)->frame;
+	mutex_exit(&(buf_pool->mutex));
+
+	replica = buf_page_get(space + RECV_REPLICA_SPACE_ADD, page_no, RW_X_LATCH, &mtr);
+	buf_page_dbg_add_level(replica, SYNC_NO_ORDER_CHECK);
+
+	recv_check_identical(page + FIL_PAGE_DATA, replica + FIL_PAGE_DATA, PAGE_HEADER + PAGE_MAX_TRX_ID - FIL_PAGE_DATA);
+
+	recv_check_identical(page + PAGE_HEADER + PAGE_MAX_TRX_ID + 8,
+		replica + PAGE_HEADER + PAGE_MAX_TRX_ID + 8,
+		UNIV_PAGE_SIZE - FIL_PAGE_DATA_END - PAGE_HEADER - PAGE_MAX_TRX_ID - 8);
+
+	mtr_commit(&mtr);
+}
+
+
+void recv_compare_spaces(ulint space1, ulint space2, ulint n_pages)
+{
+	page_t*	replica;
+	page_t*	page;
+	mtr_t	mtr;
+	page_t*	frame;
+	ulint	page_no;
+
+	replica = buf_frame_alloc();
+	page = buf_frame_alloc();
+
+	for (page_no = 0; page_no < n_pages; page_no++) {
+		mtr_start(&mtr);
+
+		frame = buf_page_get_gen(space1, page_no, RW_S_LATCH, NULL,
+			BUF_GET_IF_IN_POOL,
+			IB__FILE__, __LINE__,
+			&mtr);
+		if (frame) {
+			buf_page_dbg_add_level(frame, SYNC_NO_ORDER_CHECK);
+			ut_memcpy(page, frame, UNIV_PAGE_SIZE);
+		} else {
+			/* Read it from file */
+			fil_io(OS_FILE_READ, TRUE, space1, page_no, 0,
+				UNIV_PAGE_SIZE, page, NULL);
+		}
+
+		frame = buf_page_get_gen(space2, page_no, RW_S_LATCH, NULL,
+			BUF_GET_IF_IN_POOL,
+			IB__FILE__, __LINE__,
+			&mtr);
+		if (frame) {
+			buf_page_dbg_add_level(frame, SYNC_NO_ORDER_CHECK);
+			ut_memcpy(replica, frame, UNIV_PAGE_SIZE);
+		} else {
+			/* Read it from file */
+			fil_io(OS_FILE_READ, TRUE, space2, page_no, 0,
+				UNIV_PAGE_SIZE, replica, NULL);
+		}
+
+		recv_check_identical(page + FIL_PAGE_DATA,
+			replica + FIL_PAGE_DATA,
+			PAGE_HEADER + PAGE_MAX_TRX_ID - FIL_PAGE_DATA);
+
+		recv_check_identical(page + PAGE_HEADER + PAGE_MAX_TRX_ID + 8,
+			replica + PAGE_HEADER + PAGE_MAX_TRX_ID + 8,
+			UNIV_PAGE_SIZE - FIL_PAGE_DATA_END
+			- PAGE_HEADER - PAGE_MAX_TRX_ID - 8);
+
+		mtr_commit(&mtr);
+	}
+
+	buf_frame_free(replica);
+	buf_frame_free(page);
+}
+
+void recv_compare_spaces_low(ulint space1, ulint space2, ulint n_pages)
+{
+	mutex_enter(&(log_sys->mutex));
+	/*将hash中的recv_addr_t的日志应用到page当中*/
+	recv_apply_hashed_log_recs(FALSE);
+
+	mutex_exit(&(log_sys->mutex));
+	recv_compare_spaces(space1, space2, n_pages);
+}
+
+/*通过type执行mtr方法调用*/
+static ulint recv_parse_log_rec(byte* ptr, byte* end_ptr, byte* type, ulint space, ulint* page_no, byte** body)
+{
+	byte* new_ptr;
+
+	if(ptr == end_ptr)
+		return 0;
+
+	if(*ptr == MLOG_MULTI_REC_END){
+		*type = *ptr;
+		return 1;
+	}
+
+	if(*ptr == MLOG_DUMMY_RECORD){
+		*type = *ptr;
+		*space = 1000;
+		return 1;
+	}
+
+	new_ptr = mlog_parse_initial_log_record(ptr, end_ptr, type, space, page_no);
+	if(!new_ptr)
+		return 0;
+
+	if (*space != 0 || *page_no > 0x8FFFFFFF) {
+		recv_sys->found_corrupt_log = TRUE;
+		return(0);
+	}
+
+	*body = new_ptr;
+	/*对mtr方法的调用*/
+	new_ptr = recv_parse_or_apply_log_rec_body(*type, new_ptr, end_ptr, NULL, NULL);
+	if(!new_ptr)
+		return 0;
+
+	return (new_ptr - ptr);
+}
+
+/*增加一个长度为len的数据对应新的LSN值*/
+static dulint recv_calc_lsn_on_data_add(dulint lsn, ulint len)
+{
+	ulint frag_len;
+	ulint lsn_len;
+
+	frag_len = (ut_dulint_get_low(lsn) % OS_FILE_LOG_BLOCK_SIZE) - LOG_BLOCK_HDR_SIZE;
+	ut_ad(frag_len < OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_HDR_SIZE - LOG_BLOCK_TRL_SIZE);
+
+	/*获得lsn的增量*/
+	lsn_len = len + ((len + frag_len) / (OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_HDR_SIZE - LOG_BLOCK_TRL_SIZE)) * (LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE);
+
+	return ut_dulint_add(lsn, lsn_len);
+}
+
+void recv_check_incomplete_log_recs(byte* ptr, ulint len)
+{
+	ulint	i;
+	byte	type;
+	ulint	space;
+	ulint	page_no;
+	byte*	body;
+
+	for (i = 0; i < len; i++) {
+		ut_a(0 == recv_parse_log_rec(ptr, ptr + i, &type, &space, &page_no, &body));
+	}
+}
+
+/*打印错误重做日志的诊断信息*/
+static void recv_report_corrupt_log(byte* ptr, byte type, ulint space, ulint page_no)
+{
+	char* err_buf;
+
+	fprintf(stderr,
+		"InnoDB: ############### CORRUPT LOG RECORD FOUND\n"
+		"InnoDB: Log record type %lu, space id %lu, page number %lu\n"
+		"InnoDB: Log parsing proceeded successfully up to %lu %lu\n",
+		(ulint)type, space, page_no,
+		ut_dulint_get_high(recv_sys->recovered_lsn),
+		ut_dulint_get_low(recv_sys->recovered_lsn));
+
+	err_buf = ut_malloc(1000000);
+
+	fprintf(stderr,
+		"InnoDB: Previous log record type %lu, is multi %lu\n"
+		"InnoDB: Recv offset %lu, prev %lu\n",
+		recv_previous_parsed_rec_type,
+		recv_previous_parsed_rec_is_multi,
+		ptr - recv_sys->buf,
+		recv_previous_parsed_rec_offset);
+
+	if((ulint)(ptr - recv_sys->buf + 100) > recv_previous_parsed_rec_offset 
+		&& (ulint)(ptr - recv_sys->buf + 100 - recv_previous_parsed_rec_offset) < 200000){
+			ut_sprintf_buf(err_buf, recv_sys->buf + recv_previous_parsed_rec_offset - 100,
+				ptr - recv_sys->buf + 200 - recv_previous_parsed_rec_offset);
+
+			fprintf(stderr,
+				"InnoDB: Hex dump of corrupt log starting 100 bytes before the start\n"
+				"InnoDB: of the previous log rec,\n"
+				"InnoDB: and ending 100 bytes after the start of the corrupt rec:\n%s\n",
+				err_buf);
+	}
+
+	ut_free(err_buf);
+
+	fprintf(stderr,
+		"InnoDB: WARNING: the log file may have been corrupt and it\n"
+		"InnoDB: is possible that the log scan did not proceed\n"
+		"InnoDB: far enough in recovery! Please run CHECK TABLE\n"
+		"InnoDB: on your InnoDB tables to check that they are ok!\n");
+}
+
 
 
 

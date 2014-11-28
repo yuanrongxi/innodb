@@ -2056,7 +2056,7 @@ ibool log_check_log_recs(byte* buf, ulint len, dulint buf_start_lsn)
 }
 
 /*×´Ì¬ÐÅÏ¢Êä³ö*/
-void log_print(char*	buf, char*	buf_end)
+void log_print(char* buf, char*	buf_end)
 {
 	double	time_elapsed;
 	time_t	current_time;
