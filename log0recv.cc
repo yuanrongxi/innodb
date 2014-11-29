@@ -259,7 +259,7 @@ static ibool recv_check_cp_is_consistent(byte* buf)
 	return TRUE;
 }
 
-/*在groups中查找LSN最大和法的checkpoint*/
+/*在groups中查找LSN最大的checkpoint*/
 static ulint recv_find_max_checkpoint(log_group_t** max_group, ulint* max_field)
 {
 	log_group_t*	group;
@@ -1013,7 +1013,7 @@ void recv_compare_spaces_low(ulint space1, ulint space2, ulint n_pages)
 	recv_compare_spaces(space1, space2, n_pages);
 }
 
-/*通过type执行mtr方法调用*/
+/*通过type执行mtr方法调用,日志解析成记录*/
 static ulint recv_parse_log_rec(byte* ptr, byte* end_ptr, byte* type, ulint space, ulint* page_no, byte** body)
 {
 	byte* new_ptr;
@@ -1121,6 +1121,866 @@ static void recv_report_corrupt_log(byte* ptr, byte type, ulint space, ulint pag
 		"InnoDB: far enough in recovery! Please run CHECK TABLE\n"
 		"InnoDB: on your InnoDB tables to check that they are ok!\n");
 }
+
+/*将recv_sys->buf缓冲区中的log解析成mtr recv_addr_t数据并存储hash table中*/
+static ibool recv_parse_log_recs(ibool store_to_hash)
+{
+	byte*	ptr;
+	byte*	end_ptr;
+	ulint	single_rec;
+	ulint	len;
+	ulint	total_len;
+	dulint	new_recovered_lsn;
+	dulint	old_lsn;
+	byte	type;
+	ulint	space;
+	ulint	page_no;
+	byte*	body;
+	ulint	n_recs;
+
+	ut_ad(mutex_own(&(log_sys->mutex)));
+	ut_ad(!ut_dulint_is_zero(recv_sys->parse_start_lsn));
+
+loop:
+	ptr = recv_sys->buf + recv_sys->recovered_offset;
+	end_ptr = recv_sys->buf + recv_sys->len;
+
+	if(ptr == end_ptr)
+		return FALSE;
+
+	single_rec = (ulint)*ptr & MLOG_SINGLE_REC_FLAG;
+	if(single_rec || *ptr == MLOG_DUMMY_RECORD){
+		old_lsn = recv_sys->recovered_lsn;
+
+		len = recv_parse_log_rec(ptr, end_ptr, &type, &space, &page_no, &body);
+		if(len == 0 || recv_sys->found_corrupt_log){ /*mtr 方法调用错误，进行日志诊断*/
+			if (recv_sys->found_corrupt_log)
+				recv_report_corrupt_log(ptr, type, space, page_no);
+
+			return FALSE;
+		}
+
+		/*计算恢复的lsn*/
+		new_recovered_lsn = recv_calc_lsn_on_data_add(old_lsn, len);
+		if(ut_dulint_cmp(new_recovered_lsn, recv_sys->scanned_lsn) > 0) /*恢复的lsn已经大于扫描过的lsn,这可能是个异常，退出函数*/
+			return FALSE;
+
+		recv_previous_parsed_rec_type = (ulint)type;
+		recv_previous_parsed_rec_offset = recv_sys->recovered_offset;
+		recv_previous_parsed_rec_is_multi = 0;
+
+		/*更新恢复的偏移量和lsn*/
+		recv_sys->recovered_offset += len;
+		recv_sys->recovered_lsn = new_recovered_lsn;
+
+		if(log_debug_writes)
+			fprintf(stderr, "InnoDB: Parsed a single log rec type %lu len %lu space %lu page no %lu\n", (ulint)type, len, space, page_no);
+
+		if(type == MLOG_DUMMY_RECORD){
+
+		}
+		else if(store_to_hash) /*将恢复指令存到hash表当中*/
+			recv_add_to_hash_table(type, space, page_no, body, ptr + len, old_lsn, recv_sys->recovered_lsn);
+		else{
+#ifdef UNIV_LOG_DEBUG
+			recv_check_incomplete_log_recs(ptr, len);
+#endif
+		}
+	}
+	else{
+		total_len = 0;
+		n_recs = 0;
+
+		for(;;){
+			/*将日志解析成记录*/
+			len = recv_parse_log_rec(ptr, end_ptr, &type, &space, &page_no, &body);
+			if(len == 0 || recv_sys->found_corrupt_log){
+				if(recv_sys->found_corrupt_log)
+					recv_report_corrupt_log(ptr, type, space, page_no);
+				return FALSE;
+			}
+
+			recv_previous_parsed_rec_type = (ulint)type;
+			recv_previous_parsed_rec_offset = recv_sys->recovered_offset + total_len;
+			recv_previous_parsed_rec_is_multi = 1;
+
+			if ((!store_to_hash) && (type != MLOG_MULTI_REC_END)){
+#ifdef UNIV_LOG_DEBUG
+				recv_check_incomplete_log_recs(ptr, len);
+#endif	
+			}
+
+			if(log_debug_writes)
+				fprintf(stderr, "InnoDB: Parsed a multi log rec type %lu len %lu space %lu page no %lu\n", (ulint)type, len, space, page_no);
+
+			total_len += len;
+			n_recs++;
+
+			ptr += len;
+
+			if (type == MLOG_MULTI_REC_END) /*已经到末尾了*/
+				break;
+		}
+		/*修改recovered_lsn*/
+		new_recovered_lsn = recv_calc_lsn_on_data_add(old_lsn, len);
+		if(ut_dulint_cmp(new_recovered_lsn, recv_sys->scanned_lsn) > 0) /*恢复的lsn已经大于扫描过的lsn,这可能是个异常，退出函数*/
+			return FALSE;
+
+		/*调整log的恢复位置*/
+		ptr = recv_sys->buf + recv_sys->recovered_offset;
+		/*批量将recv_addr加入到hash table当中*/
+		for(;;){
+			old_lsn = recv_sys->recovered_lsn;
+			len = recv_parse_log_rec(ptr, end_ptr, &type, &space, &page_no, &body);
+			/*调整lsn和offset*/
+			recv_sys->recovered_offset += len;
+			recv_sys->recovered_lsn = recv_calc_lsn_on_data_add(old_lsn, len);
+			if(type == MLOG_MULTI_REC_END)
+				break;
+
+			if(store_to_hash)
+				recv_add_to_hash_table(type, space, page_no, body, ptr + len, old_lsn, new_recovered_lsn);
+			else{
+
+			}
+			ptr += len;
+		}
+	}
+	/*一直继续，直到解析完成为止*/
+	goto loop;
+}
+
+static ibool recv_sys_add_to_parsing_buf(byte* log_block, dulint scanned_lsn)
+{
+	ulint	more_len;
+	ulint	data_len;
+	ulint	start_offset;
+	ulint	end_offset;
+
+	ut_ad(ut_dulint_cmp(scanned_lsn, recv_sys->scanned_lsn) >= 0);
+
+	if(ut_dulint_is_zero(recv_sys->parse_start_len)) /*不能开始解析buf中的数据，可能是没有找到开始点*/
+		return FALSE;
+
+	if(ut_dulint_cmp(recv_sys->parse_start_lsn, scanned_lsn) >= 0) /*解析开始的lsn比scanned_ls还大*/
+		return FALSE;
+	else if(ut_dulint_cmp(recv_sys->scanned_lsn, scanned_lsn) >= 0)
+		return FALSE;
+	else if(ut_dulint_cmp(recv_sys->parse_start_lsn, scanned_lsn) > 0)
+		more_len = ut_dulint_minus(scanned_lsn, recv_sys->parse_start_lsn);
+	else
+		more_len = ut_dulint_minus(scanned_lsn, recv_sys->scanned_lsn);
+
+	if(more_len == 0)
+		return FALSE;
+
+	ut_ad(data_len > more_len);
+
+	/*计算开始的偏移量*/
+	start_offset = data_len - more_len;
+	if(start_offset < LOG_BLOCK_HDR_SIZE)
+		start_offset = LOG_BLOCK_HDR_SIZE;
+	/*计算结束的offset*/
+	end_offset = data_len;
+	if(end_offset > OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE)
+		end_offset = OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE;
+
+	ut_ad(start_offset <= end_offset);
+	if(start_offset < end_offset){ /*将block中的数据拷贝至recv_sys->buf当汇总*/
+		ut_memcpy(recv_sys->buf + recv_sys->len, log_block + start_offset, end_offset - start_offset);
+		recv_sys->len += end_offset - start_offset;
+
+		ut_a(recv_sys->len <= RECV_PARSING_BUF_SIZE);
+	}
+
+	return TRUE;
+}
+
+/*移除应recover的数据并将未recover的数据移动到recv_buf的最前面*/
+static void recv_sys_justify_left_parsing_buf()
+{
+	ut_memmove(recv_sys->buf, recv_sys->buf + recv_sys->recovered_offset,
+		recv_sys->len - recv_sys->recovered_offset);
+
+	/*修正偏移*/
+	recv_sys->len -= recv_sys->recovered_offset;
+	recv_sys->recovered_offset = 0;
+}
+
+ibool recv_scan_log_recs(ibool apply_automatically, ulint available_memory, ibool store_to_hash, byte* buf, ulint len, 
+	dulint start_lsn, dulint* contiguous_lsn, dulint* group_scanned_lsn)
+{
+	byte*	log_block;
+	ulint	no;
+	dulint	scanned_lsn;
+	ibool	finished;
+	ulint	data_len;
+	ibool	more_data;
+
+	ut_ad(ut_dulint_get_low(start_lsn) % OS_FILE_LOG_BLOCK_SIZE == 0);
+	ut_ad(len % OS_FILE_LOG_BLOCK_SIZE == 0);
+	ut_ad(len > 0);
+	ut_a(apply_automatically <= TRUE);
+	ut_a(store_to_hash <= TRUE);
+
+	finished = FALSE;
+
+	log_block = buf;
+	scanned_lsn = start_lsn;
+	more_data = FALSE;
+	
+	/*scan buf直到其末尾,对块的合法性判断，将合法性的块log写入到recv_sys->buf中*/
+	while(log_block < buf + len && !finished){
+		no = log_block_get_hdr_no(log_block); /*获得block的序号*/
+		if(no != log_block_convert_lsn_to_no(scanned_lsn) || !log_block_checksum_is_ok_old_format(log_block)){ /*校验block的合法性*/
+			if(no == log_block_convert_lsn_to_no(scanned_lsn) && !log_block_checksum_is_ok_old_format(log_block)){ /*块序号不相等且校验码不对*/
+				fprintf(stderr,
+					"InnoDB: Log block no %lu at lsn %lu %lu has\n"
+					"InnoDB: ok header, but checksum field contains %lu, should be %lu\n",
+					no, ut_dulint_get_high(scanned_lsn), ut_dulint_get_low(scanned_lsn),
+					log_block_get_checksum(log_block), log_block_calc_checksum(log_block));
+			}
+			
+			finished = TRUE;
+			break;
+		}
+
+		/*检查是否flush到磁盘上*/
+		if(log_block_get_flush_bit(log_block)){
+			if(ut_dulint_cmp(scanned_lsn, *contiguous_lsn) > 0)
+				*contiguous_lsn = scanned_lsn;
+		}
+
+		data_len = log_block_get_data_len(log_block);
+		if ((store_to_hash || (data_len == OS_FILE_LOG_BLOCK_SIZE))
+			&& (ut_dulint_cmp(ut_dulint_add(scanned_lsn, data_len), recv_sys->scanned_lsn) > 0) /*不属于scanned范围*/
+			&& (recv_sys->scanned_checkpoint_no > 0) 
+			&& (log_block_get_checkpoint_no(log_block) < recv_sys->scanned_checkpoint_no) /*小于扫描的checkpoint点*/
+			&& (recv_sys->scanned_checkpoint_no - log_block_get_checkpoint_no(log_block)> 0x80000000)) {
+				finished = TRUE;
+				ut_error;
+				break;
+		}
+
+		/*刚开始恢复，设置各种lsn*/
+		if(ut_dulint_is_zero(recv_sys->parse_start_lsn) && (log_block_get_first_rec_group(log_block) > 0)){
+			recv_sys->parse_start_lsn = ut_dulint_add(scanned_lsn, log_block_get_first_rec_group(log_block));
+
+			recv_sys->scanned_lsn = recv_sys->parse_start_lsn;
+			recv_sys->recovered_lsn = recv_sys->parse_start_lsn;
+		}
+
+		scanned_lsn = ut_dulint_add(scanned_lsn, data_len);
+		if(ut_dulint_cmp(scanned_lsn, recv_sys->scanned_lsn) > 0){
+			if (recv_sys->len + 4 * OS_FILE_LOG_BLOCK_SIZE >= RECV_PARSING_BUF_SIZE){
+				fprintf(stderr, "InnoDB: Error: log parsing buffer overflow. Recovery may have failed!\n");
+
+				recv_sys->found_corrupt_log = TRUE;
+			}
+			else if(!recv_sys->found_corrupt_log) /*将日志数据放入recv_sys->buff*/
+				more_data = recv_sys_add_to_parsing_buf(log_block, scanned_lsn); /*将数据放入recv_addr当中*/
+		
+			recv_sys->scanned_lsn = scanned_lsn;
+			recv_sys->scanned_lsn = log_block_get_checkpoint_no(log_block);
+		}
+
+		if(data_len < OS_FILE_LOG_BLOCK_SIZE)
+			finished = TRUE;
+		else /*完成一块的parse*/
+			log_block += OS_FILE_LOG_BLOCK_SIZE;
+	}
+
+	*group_scanned_lsn = scanned_lsn;
+	if(recv_needed_recovery || (recv_is_from_backup && !recv_is_making_a_backup)){
+		recv_scan_print_counter ++;
+		if(finished || recv_scan_print_counter % 80 == 0){
+			fprintf(stderr, 
+				"InnoDB: Doing recovery: scanned up to log sequence number %lu %lu\n",
+				ut_dulint_get_high(*group_scanned_lsn),
+				ut_dulint_get_low(*group_scanned_lsn));
+		}
+	}
+
+	if(more_data && !recv_sys->found_corrupt_log){
+		/*尝试解析log*/
+		recv_parse_log_recs(store_to_hash);
+		if(store_to_hash && mem_heap_get_size(recv_sys->heap) > available_memory && apply_automatically){ /*批量将recv_addr中的数据应用到页上*/
+			recv_apply_hashed_log_recs(FALSE);
+		}
+
+		if(recv_sys->recovered_offset > RECV_PARSING_BUF_SIZE / 4) /*偏移大于解析buffer的1/4，进行buffer数据移动*/
+			recv_sys_justify_left_parsing_buf();
+	}
+
+	return finished;
+}
+
+/*从group文件读取一段日志数据恢复到page当中*/
+static void recv_group_scan_log_recs(log_group_t* group, dulint* contiguous_lsn, dulint* group_scanned_lsn)
+{
+	ibool finished;
+	dulint start_len;
+	dulint end_lsn;
+
+	finished = FALSE;
+	start_lsn = *contiguous_lsn;
+
+	while(!finished){
+		end_lsn = ut_dulint_add(start_lsn, RECV_SCAN_SIZE);
+		/*从group file中读取一段日志数据到log_sys->buf当中*/
+		log_group_read_log_seg(LOG_RECOVER, log_sys->buf, group, start_lsn, end_lsn);
+
+		/*将读出的数据进行日志恢复到对应的page当中*/
+		finished = recv_scan_log_recs(TRUE, buf_pool_get_curr_size() - RECV_POOL_N_FREE_BLOCKS * UNIV_PAGE_SIZE,
+			TRUE, log_sys->buf, RECV_SCAN_SIZE, start_lsn, contiguous_lsn, group_scanned_lsn);
+
+		start_lsn = end_lsn;
+	}
+
+	if(log_debug_writes){
+		fprintf(stderr,
+			"InnoDB: Scanned group %lu up to log sequence number %lu %lu\n",
+			group->id, ut_dulint_get_high(*group_scanned_lsn), ut_dulint_get_low(*group_scanned_lsn));
+	}
+}
+
+/*从checkpoint中开始恢复数据*/
+ulint recv_recovery_from_checkpoint_start(ulint type, dulint limit_lsn, dulint min_flushed_lsn, dulint max_flushed_lsn)
+{
+	log_group_t*	group;
+	log_group_t*	max_cp_group;
+	log_group_t*	up_to_date_group;
+	ulint		max_cp_field;
+	dulint		checkpoint_lsn;
+	dulint		checkpoint_no;
+	dulint		old_scanned_lsn;
+	dulint		group_scanned_lsn;
+	dulint		contiguous_lsn;
+	dulint		archived_lsn;
+	ulint		capacity;
+	byte*		buf;
+	byte		log_hdr_buf[LOG_FILE_HDR_SIZE];
+	ulint		err;
+
+	/*从checkpoint开始恢复，limit_lsn必须有个上限*/
+	ut_ad(type != LOG_CHECKPOINT || ut_dulint_cmp(limit_lsn, ut_dulint_max) == 0);
+	if(type == LOG_CHECKPOINT){ /*建立recv_sys*/
+		recv_sys_create();
+		recv_sys_init(FALSE, buf_pool_get_curr_size());
+	}
+
+	if(sys_force_recovery >= SRV_FORCE_NO_LOG_REDO){
+		fprintf(stderr, "InnoDB: The user has set SRV_FORCE_NO_LOG_REDO on\n");
+		fprintf(stderr, "InnoDB: Skipping log redo\n");
+
+		return DB_SUCCESS;
+	}
+
+	sync_order_checks_on = TRUE;
+	recv_recovery_on = TRUE;
+
+	recv_sys->limit_lsn = limit_lsn;
+	mutex_enter(&(log_sys->mutex));
+
+	/*查找最近的checkpoint信息在groups各个组当中*/
+	err = recv_find_max_checkpoint(&max_cp_group, &max_cp_field);
+	if(err != DB_SUCCESS){
+		mutex_exit(&(log_sys->mutex));
+		return err;
+	}
+
+	/*将checkpoint信息读取到group->checkbuf当中*/
+	log_group_read_checkpoint_info(max_cp_group, max_cp_field);
+	buf = log_sys->checkpoint_buf;
+	checkpoint_lsn = mach_read_from_8(buf + LOG_CHECKPOINT_LSN);
+	checkpoint_no = mach_read_from_8(buf + LOG_CHECKPOINT_NO);
+	archived_lsn = mach_read_from_8(buf + LOG_CHECKPOINT_ARCHIVED_LSN);
+
+	/*读取文件头信息*/
+	fil_io(OS_FILE_READ | OS_FILE_LOG, TRUE, max_cp_group->space_id, 0, 0, LOG_FILE_HDR_SIZE, log_hdr_buf, max_cp_group);
+	if (0 == ut_memcmp(log_hdr_buf + LOG_FILE_WAS_CREATED_BY_HOT_BACKUP, "ibbackup", ut_strlen("ibbackup"))) {
+		fprintf(stderr,
+			"InnoDB: The log file was created by ibbackup --restore at\n"
+			"InnoDB: %s\n", log_hdr_buf + LOG_FILE_WAS_CREATED_BY_HOT_BACKUP);
+
+		ut_memcpy(log_hdr_buf + LOG_FILE_WAS_CREATED_BY_HOT_BACKUP, "    ", 4);
+		/*取消备份标志，并且回写到文件当中，因为这个文件已经作为group的恢复主本*/
+		fil_io(OS_FILE_WRITE | OS_FILE_LOG, TRUE, max_cp_group->space_id, 0, 0, OS_FILE_LOG_BLOCK_SIZE, log_hdr_buf, max_cp_group);
+	}
+
+	/*统一各个组归档的file_no和offset*/
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	while(group){
+		log_checkpoint_get_nth_group_info(buf, group->id, &(group->archived_file_no), &(group->archived_offset));
+		group = UT_LIST_GET_NEXT();
+	}
+
+	if(type == LOG_CHECKPOINT){
+		recv_sys->parse_start_lsn = checkpoint_lsn; /*从checkpoint出开始做日志恢复*/
+		recv_sys->scanned_lsn = checkpoint_lsn;		
+		recv_sys->scanned_checkpoint_no = 0;
+		recv_sys->recovered_lsn = checkpoint_lsn;
+
+		/*需要对日志进行重做，恢复page中的数据*/
+		if(ut_dulint_cmp(checkpoint_lsn, max_flushed_lsn) != 0 
+			|| ut_dulint_cmp(checkpoint_lsn, min_flushed_lsn) != 0){ /*设置开始恢复日志数据的操作*/
+				recv_needed_recovery = TRUE;
+				ut_print_timestamp(stderr);
+
+				fprintf(stderr,
+					"  InnoDB: Database was not shut down normally.\n"
+					"InnoDB: Starting recovery from log files...\n");
+
+				fprintf(stderr, 
+					"InnoDB: Starting log scan based on checkpoint at\n"
+					"InnoDB: log sequence number %lu %lu\n",
+					ut_dulint_get_high(checkpoint_lsn),
+					ut_dulint_get_low(checkpoint_lsn));
+		}
+	}
+
+	contiguous_lsn = ut_dulint_align_down(recv_sys->scanned_lsn, OS_FILE_LOG_BLOCK_SIZE);
+	/*从归档日志中恢复页*/
+	if(type == LOG_ARCHIVE){
+		group = recv_sys->archive_group;
+		capacity = log_group_get_capacity(group);
+
+		if ((ut_dulint_cmp(recv_sys->scanned_lsn, ut_dulint_add(checkpoint_lsn, capacity)) > 0)
+			|| (ut_dulint_cmp(checkpoint_lsn, ut_dulint_add(recv_sys->scanned_lsn, capacity)) > 0)){
+				mutex_exit(&(log_sys->mutex));
+				return DB_SUCCESS;
+		}
+
+		/*从group文件读取一段日志数据恢复到page当中*/
+		recv_group_scan_log_recs(group, &contiguous_lsn, &group_scanned_lsn);
+		if(ut_dulint_cmp(recv_sys->scanned_lsn, checkpoint_lsn) < 0){
+			mutex_exit(&(log_sys->mutex));
+			return DB_ERROR;
+		}
+
+		group->scanned_lsn = group_scanned_lsn;
+		up_to_date_group = group;
+	}
+	else
+		up_to_date_group = max_cp_group;
+
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	if((type == LOG_ARCHIVE) && (group == recv_sys->archive_group))
+		group = UT_LIST_GET_NEXT(log_groups, group);
+
+	/*各个group刷盘的数据的位置可能不一样，所以要逐group进行数据恢复*/
+	while(group){
+		old_scanned_lsn = recv_sys->scanned_lsn;
+		recv_group_scan_log_recs(group, &contiguous_lsn, &group_scanned_lsn);
+
+		group->scanned_lsn = group_scanned_lsn;
+		if(ut_dulint_cmp(old_scanned_lsn, group_scanned_lsn) < 0)
+			up_to_date_group = group;
+
+		if ((type == LOG_ARCHIVE) && (group == recv_sys->archive_group))
+				group = UT_LIST_GET_NEXT(log_groups, group);
+	
+		group = UT_LIST_GET_NEXT(log_groups, group);
+	}
+
+	/*已恢复的lsn小于checkpoint，表示已经无数据需要进行恢复*/
+	if(ut_dulint_cmp(recv_sys->recovered_lsn, checkpoint_lsn) < 0){
+		mutex_exit(&(log_sys->mutex));
+		if(ut_dulint_cmp(recv_sys->recovered_lsn, limit_lsn) >= 0)
+			return DB_SUCCESS;
+
+		ut_error;
+		return DB_ERROR;
+	}
+
+	/*刷新log_sys的的信息*/
+	log_sys->next_checkpoint_lsn = checkpoint_lsn;
+	log_sys->next_checkpoint_no = ut_dulint_add(checkpoint_no, 1);
+
+	log_sys->archived_lsn = archived_lsn;
+	/*将up_to_date_group信息复制到各个group当中,为了组之间的信息同步*/
+	recv_synchronize_groups(up_to_date_group);
+
+	/*更新lsn*/
+	log_sys->lsn = recv_sys->recovered_lsn;
+	/*更新最后一个block到log_sys->buf当中，因为last_block可能还有空间可以写入日志*/
+	ut_memcpy(log_sys->buf, recv_sys->last_block, OS_FILE_LOG_BLOCK_SIZE);
+
+	log_sys->buf_free = ut_dulint_get_low(log_sys->lsn) % OS_FILE_LOG_BLOCK_SIZE;
+	log_sys->buf_next_to_write = log_sys->buf_free;
+	log_sys->written_to_some_lsn = log_sys->lsn;
+	log_sys->written_to_all_lsn = log_sys->lsn;
+	log_sys->last_checkpoint_lsn = checkpoint_lsn;
+
+	log_sys->next_checkpoint_no = ut_dulint_add(checkpoint_no, 1);
+
+	if(ut_dulint_cmp(archived_lsn, ut_dulint_max) == 0) /*archived_lsn是个无限大的数，表示没有开启归档功能*/
+		log_sys->archiving_state = LOG_ARCH_OFF;
+
+	mutex_enter(SYS_MUTEX);
+	recv_sys->apply_log_recs = TRUE;
+	mutex_exit(SYS_MUTEX);
+
+	mutex_exit(&(log_sys->mutex));
+
+	sync_order_checks_on = FALSE;
+
+	return DB_SUCCESS;
+}
+
+/*完成从checkpoint出开始日志恢复page的过程*/
+void recv_recovery_from_checkpoint_finish()
+{
+	if(srv_force_recovery < SRV_FORCE_NO_TRX_UNDO)
+		trx_rollback_or_clean_all_without_sess();
+
+	/*将recv_addr的hash表中的数据恢复到page中*/
+	if(srv_force_recovery < SRV_FORCE_NO_LOG_REDO)
+		recv_apply_hashed_log_recs(TRUE);
+
+	if(log_debug_writes)
+		fprintf(stderr, "InnoDB: Log records applied to the database\n");
+
+	/*进行了redo log恢复数据*/
+	if(recv_needed_recovery){
+		trx_sys_print_mysql_master_log_pos();
+		trx_sys_print_mysql_binlog_offset();
+	}
+
+	if (recv_sys->found_corrupt_log) {
+		fprintf(stderr,
+			"InnoDB: WARNING: the log file may have been corrupt and it\n"
+			"InnoDB: is possible that the log scan or parsing did not proceed\n"
+			"InnoDB: far enough in recovery. Please run CHECK TABLE\n"
+			"InnoDB: on your InnoDB tables to check that they are ok!\n"
+			"InnoDB: It may be safest to recover your InnoDB database from\n"
+			"InnoDB: a backup!\n");
+	}
+	/*redo日志恢复结束*/
+	recv_recovery_on = FALSE;
+
+#ifndef UNIV_LOG_DEBUG
+	recv_sys_free();
+#endif
+}
+
+/*截取recv_sys->last_block中的信息做日志重新写入*/
+void recv_reset_logs(dulint lsn, ulint arch_log_no, ibool new_logs_created)
+{
+	log_group_t* group;
+	ut_ad(mutex_own(&(log_sys->mutex)));
+
+	log_sys->lsn = ut_dulint_align_up(lsn, OS_FILE_LOG_BLOCK_SIZE);
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+	while(group){
+		group->lsn = log_sys->lsn;
+		group->lsn_offset = LOG_FILE_HDR_SIZE;
+
+		group->archived_file_no = arch_log_no;		
+		group->archived_offset = 0;
+
+		if (!new_logs_created)
+			recv_truncate_group(group, group->lsn, group->lsn, group->lsn, group->lsn);
+
+		group = UT_LIST_GET_NEXT(log_groups, group);
+	}
+
+	log_sys->buf_next_to_write = 0;
+	log_sys->written_to_some_lsn = log_sys->lsn;
+	log_sys->written_to_all_lsn = log_sys->lsn;
+
+	log_sys->next_checkpoint_no = ut_dulint_zero;
+	log_sys->last_checkpoint_lsn = ut_dulint_zero;
+
+	log_sys->archived_lsn = log_sys->lsn;
+
+	log_block_init(log_sys->buf, log_sys->lsn);
+	log_block_set_first_rec_group(log_sys->buf, LOG_BLOCK_HDR_SIZE);
+
+	log_sys->buf_free = LOG_BLOCK_HDR_SIZE;
+	log_sys->lsn = ut_dulint_add(log_sys->lsn, LOG_BLOCK_HDR_SIZE);
+
+	mutex_exit(&(log_sys->mutex));
+
+	/* Reset the checkpoint fields in logs */
+	log_make_checkpoint_at(ut_dulint_max, TRUE);
+	log_make_checkpoint_at(ut_dulint_max, TRUE)
+}
+
+void recv_reset_log_files_for_backup(char* log_dir, ulint n_log_files, ulint log_file_size, dulint lsn)
+{
+	os_file_t	log_file;
+	ibool		success;
+	byte*		buf;
+	ulint		i;
+	char		name[5000];
+	
+	buf = ut_malloc(LOG_FILE_HDR_SIZE + OS_FILE_LOG_BLOCK_SIZE);
+	
+	/*建立了个多个文件，并设置了长度*/
+	for (i = 0; i < n_log_files; i++) {
+		sprintf(name, "%sib_logfile%lu", log_dir, i);
+
+		log_file = os_file_create_simple(name, OS_FILE_CREATE, OS_FILE_READ_WRITE, &success);
+		if (!success) {
+			printf("InnoDB: Cannot create %s. Check that the file does not exist yet.\n", name);
+			exit(1);
+		}
+
+		printf("Setting log file size to %lu %lu\n", ut_get_high32(log_file_size), log_file_size & 0xFFFFFFFF);
+		success = os_file_set_size(name, log_file, log_file_size & 0xFFFFFFFF, ut_get_high32(log_file_size));
+
+		if (!success) {
+			printf("InnoDB: Cannot set %s size to %lu %lu\n", name, ut_get_high32(log_file_size), log_file_size & 0xFFFFFFFF);
+			exit(1);
+		}
+
+		os_file_flush(log_file);
+		os_file_close(log_file);
+	}
+
+	/* We pretend there is a checkpoint at lsn + LOG_BLOCK_HDR_SIZE */
+	log_reset_first_header_and_checkpoint(buf, lsn);
+	
+	log_block_init_in_old_format(buf + LOG_FILE_HDR_SIZE, lsn);
+	log_block_set_first_rec_group(buf + LOG_FILE_HDR_SIZE, LOG_BLOCK_HDR_SIZE);
+	sprintf(name, "%sib_logfile%lu", log_dir, 0);
+
+	log_file = os_file_create_simple(name, OS_FILE_OPEN, OS_FILE_READ_WRITE, &success);
+	if (!success) {
+		printf("InnoDB: Cannot open %s.\n", name);
+		exit(1);
+	}
+
+	os_file_write(name, log_file, buf, 0, 0, LOG_FILE_HDR_SIZE + OS_FILE_LOG_BLOCK_SIZE);
+	os_file_flush(log_file);
+	os_file_close(log_file);
+
+	ut_free(buf);
+}
+
+/*从group的archive file中读取redo log来进行数据恢复*/
+static ibool log_group_recover_from_archive_file(log_group_t* group)
+{
+	os_file_t file_handle;
+	dulint	start_lsn;
+	dulint	file_end_lsn;
+	dulint	dummy_lsn;
+	dulint	scanned_lsn;
+	ulint	len;
+	ibool	ret;
+	byte*	buf;
+	ulint	read_offset;
+	ulint	file_size;
+	ulint	file_size_high;
+	int	input_char;
+	char	name[10000];
+
+try_open_again:	
+	buf = log_sys->buf;
+	/* Add the file to the archive file space; open the file */
+	log_archived_file_name_gen(name, group->id, group->archived_file_no);
+	fil_reserve_right_to_open();
+
+	file_handle = os_file_create(name, OS_FILE_OPEN, OS_FILE_LOG, OS_FILE_AIO, &ret);
+
+	if (ret == FALSE) {
+		fil_release_right_to_open();
+ask_again:
+		fprintf(stderr, "InnoDB: Do you want to copy additional archived log files\n InnoDB: to the directory\n");
+		fprintf(stderr, "InnoDB: or were these all the files needed in recovery?\n");
+		fprintf(stderr, "InnoDB: (Y == copy more files; N == this is all)?");
+
+		input_char = getchar();
+		if (input_char == (int) 'N')
+			return(TRUE);
+		else if (input_char == (int) 'Y')
+			goto try_open_again;
+		else
+			goto ask_again;
+	}
+
+	ret = os_file_get_size(file_handle, &file_size, &file_size_high);
+	ut_a(ret);
+	ut_a(file_size_high == 0);
+	fprintf(stderr, "InnoDB: Opened archived log file %s\n", name);
+			
+	ret = os_file_close(file_handle);
+	/*用于恢复数据的archive file一定是大于文件头长度的*/
+	if (file_size < LOG_FILE_HDR_SIZE) {
+		fprintf(stderr, "InnoDB: Archive file header incomplete %s\n", name);
+		return(TRUE);
+	}
+
+	ut_a(ret);
+	fil_release_right_to_open();
+	
+	/* Add the archive file as a node to the space */
+	fil_node_create(name, 1 + file_size / UNIV_PAGE_SIZE, group->archive_space_id);
+	ut_a(RECV_SCAN_SIZE >= LOG_FILE_HDR_SIZE);
+
+	/* Read the archive file header */
+	fil_io(OS_FILE_READ | OS_FILE_LOG, TRUE, group->archive_space_id, 0, 0, LOG_FILE_HDR_SIZE, buf, NULL);
+
+	/* Check if the archive file header is consistent */
+	if (mach_read_from_4(buf + LOG_GROUP_ID) != group->id || mach_read_from_4(buf + LOG_FILE_NO) != group->archived_file_no) {
+		fprintf(stderr,"InnoDB: Archive file header inconsistent %s\n", name);
+		return(TRUE);
+	}
+
+	if (!mach_read_from_4(buf + LOG_FILE_ARCH_COMPLETED)) {
+		fprintf(stderr, "InnoDB: Archive file not completely written %s\n", name);
+		return(TRUE);
+	}
+	
+	start_lsn = mach_read_from_8(buf + LOG_FILE_START_LSN);
+	file_end_lsn = mach_read_from_8(buf + LOG_FILE_END_LSN);
+
+	if (ut_dulint_is_zero(recv_sys->scanned_lsn)) {
+		if (ut_dulint_cmp(recv_sys->parse_start_lsn, start_lsn) < 0) {
+			fprintf(stderr, "InnoDB: Archive log file %s starts from too big a lsn\n", name);	    
+			return(TRUE);
+		}
+	
+		recv_sys->scanned_lsn = start_lsn;
+	}
+	
+	if (ut_dulint_cmp(recv_sys->scanned_lsn, start_lsn) != 0) {
+		fprintf(stderr, "InnoDB: Archive log file %s starts from a wrong lsn\n", name);
+		return(TRUE);
+	}
+
+	read_offset = LOG_FILE_HDR_SIZE;
+	
+	for (;;) {
+		len = RECV_SCAN_SIZE;
+
+		if (read_offset + len > file_size)
+			len = ut_calc_align_down(file_size - read_offset, OS_FILE_LOG_BLOCK_SIZE);
+
+
+		if (len == 0)
+			break;
+	
+		if (log_debug_writes) {
+			fprintf(stderr, "InnoDB: Archive read starting at lsn %lu %lu, len %lu from file %s\n",
+					ut_dulint_get_high(start_lsn), ut_dulint_get_low(start_lsn), len, name);
+		}
+		/*从archive file中读取一段日志数据*/
+		fil_io(OS_FILE_READ | OS_FILE_LOG, TRUE, group->archive_space_id, read_offset / UNIV_PAGE_SIZE,
+			read_offset % UNIV_PAGE_SIZE, len, buf, NULL);
+		/*将读出的数据进行日志恢复到对应的page当中*/
+		ret = recv_scan_log_recs(TRUE, buf_pool_get_curr_size() - RECV_POOL_N_FREE_BLOCKS * UNIV_PAGE_SIZE,
+				TRUE, buf, len, start_lsn, &dummy_lsn, &scanned_lsn);
+
+		if (ut_dulint_cmp(scanned_lsn, file_end_lsn) == 0)
+			return(FALSE);
+
+		if (ret) {
+			fprintf(stderr, "InnoDB: Archive log file %s does not scan right\n", name);	    
+			return(TRUE);
+		}
+		
+		read_offset += len;
+		start_lsn = ut_dulint_add(start_lsn, len);
+
+		ut_ad(ut_dulint_cmp(start_lsn, scanned_lsn) == 0);
+	}
+
+	return(FALSE);
+}
+
+ulint
+recv_recovery_from_archive_start(dulint	min_flushed_lsn, dulint	limit_lsn, ulint first_log_no)	
+{
+	log_group_t*	group;
+	ulint		group_id;
+	ulint		trunc_len;
+	ibool		ret;
+	ulint		err;
+	
+	/*建立一个全局的recv_sys对象*/
+	recv_sys_create();
+	recv_sys_init(FALSE, buf_pool_get_curr_size());
+
+	sync_order_checks_on = TRUE;
+	
+	recv_recovery_on = TRUE;
+	recv_recovery_from_backup_on = TRUE;
+
+	recv_sys->limit_lsn = limit_lsn;
+
+	group_id = 0;
+	group = UT_LIST_GET_FIRST(log_sys->log_groups);
+
+	while (group) {
+		if (group->id == group_id)
+ 			break;
+		
+		group = UT_LIST_GET_NEXT(log_groups, group);
+	}
+
+	if (!group){
+		fprintf(stderr, "InnoDB: There is no log group defined with id %lu!\n", group_id);
+		return(DB_ERROR);
+	}
+
+	group->archived_file_no = first_log_no;
+
+	recv_sys->parse_start_lsn = min_flushed_lsn;
+
+	recv_sys->scanned_lsn = ut_dulint_zero;
+	recv_sys->scanned_checkpoint_no = 0;
+	recv_sys->recovered_lsn = recv_sys->parse_start_lsn;
+
+	recv_sys->archive_group = group;
+
+	ret = FALSE;
+	
+	mutex_enter(&(log_sys->mutex));
+
+	while (!ret) {
+		ret = log_group_recover_from_archive_file(group);
+
+		/* Close and truncate a possible processed archive file from the file space */	
+		trunc_len = UNIV_PAGE_SIZE * fil_space_get_size(group->archive_space_id);
+		if (trunc_len > 0) 
+			fil_space_truncate_start(group->archive_space_id, trunc_len);
+
+		group->archived_file_no++;
+	}
+
+	if (ut_dulint_cmp(recv_sys->recovered_lsn, limit_lsn) < 0) {
+		if (ut_dulint_is_zero(recv_sys->scanned_lsn))
+			recv_sys->scanned_lsn = recv_sys->parse_start_lsn;
+
+		mutex_exit(&(log_sys->mutex));
+
+		err = recv_recovery_from_checkpoint_start(LOG_ARCHIVE, limit_lsn, ut_dulint_max, ut_dulint_max);
+		if (err != DB_SUCCESS)
+			return(err);
+
+		mutex_enter(&(log_sys->mutex));
+	}
+
+	if (ut_dulint_cmp(limit_lsn, ut_dulint_max) != 0){
+		recv_apply_hashed_log_recs(FALSE);
+		recv_reset_logs(recv_sys->recovered_lsn, 0, FALSE);
+	}
+
+	mutex_exit(&(log_sys->mutex));
+	sync_order_checks_on = FALSE;
+
+	return(DB_SUCCESS);
+}
+
+void recv_recovery_from_archive_finish()
+{
+	recv_recovery_from_checkpoint_finish();
+	recv_recovery_from_backup_on = FALSE;
+}
+
+
 
 
 

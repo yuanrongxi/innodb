@@ -18,9 +18,9 @@ UNIV_INLINE ibool	recv_recovery_is_on();
 UNIV_INLINE ibool	recv_recovery_from_backup_is_on();
 /*将space,page_no对应的recv_addr中的日志数据写入到page页当中*/
 void				recv_recover_page(ibool recover_backup, ibool just_read_in, page_t* page, ulint space, ulint page_no);
-
+/*开始进行checkpoint处进行redo log数据恢复*/
 ulint				recv_recovery_from_checkpoint_start(ulint type, dulint limit_lsn, dulint min_flushed_lsn, dulint max_flushed_lsn);
-
+/*结束checkpoint的redo log数据恢复操作*/
 void				recv_recovery_from_checkpoint_finish();
 
 ibool				recv_scan_log_recs(ibool apply_automatically, ulint available_memory, ibool store_to_hash, byte* buf, 
@@ -38,7 +38,7 @@ void				recv_apply_hashed_log_recs(ibool allow_ibuf);
 
 void				recv_apply_log_recs_for_backup(ulint n_data_files, char** data_files, ulint* file_sizes);
 
-ulint				recv_recovery_from_archive_start(dulint min_flushed_lsn, dulint limit_lsn, ulint first_log_no);
+ulint				recv_recovery_from_archive_start(ulint type, dulint min_flushed_lsn, dulint limit_lsn, ulint first_log_no);
 
 void				recv_recovery_from_archive_finish();
 
@@ -50,7 +50,7 @@ void				recv_compare_spaces_low(ulint space1, ulint space2, ulint n_pages);
 typedef struct recv_data_struct	recv_data_t;
 struct recv_data_struct
 {
-	recv_data_t*	next;
+	recv_data_t*	next;	/*下一个recv_data_t,next的地址后面接了一大块内存，用于存储rec body*/
 };
 
 typedef struct recv_struct recv_t;
@@ -77,33 +77,33 @@ struct recv_addr_struct
 typedef struct recv_sys_struct recv_sys_t;
 struct recv_sys_struct
 {
-	mutex_t			mutex;
-	ibool			apply_log_recs;	/*正在应用log record到page中*/
-	ibool			apply_batch_on; /*批量应用log record标志*/
+	mutex_t			mutex;				/*保护锁*/
+	ibool			apply_log_recs;		/*正在应用log record到page中*/
+	ibool			apply_batch_on;		/*批量应用log record标志*/
 	
-	dulint			lsn;
+	dulint			lsn;			
 	ulint			last_log_buf_size;
 
-	byte*			last_block;
+	byte*			last_block;			
 	byte*			last_block_buf_start;
-	byte*			buf;
+	byte*			buf;					/*从日志块中读取的重做日志信息数据*/
+	ulint			len;					/*buf有效的日志数据长度*/
 
-	ulint			len;
-	dulint			parse_start_len;
-	dulint			scanned_lsn;
+	dulint			parse_start_lsn;		/*开始parse的lsn*/
+	dulint			scanned_lsn;			/*已经扫描过的lsn序号*/	
 
-	ulint			scanned_checkpoint_no;
-	ulint			recovered_offset;
+	ulint			scanned_checkpoint_no;	/*恢复日志的checkpoint 序号*/
+	ulint			recovered_offset;		/*恢复位置的偏移量*/
 
-	dulint			recovered_lsn;
+	dulint			recovered_lsn;			/*恢复的lsn位置*/
 	dulint			limit_lsn;
 
-	ibool			found_corrupt_log;
+	ibool			found_corrupt_log;		/*是否开启日志恢复诊断*/
 
-	log_group_t*	archive_group;
-	mem_heap_t*		heap;
-	hash_table_t*	addr_hash;
-	ulint			n_addrs;
+	log_group_t*	archive_group;		/**/
+	mem_heap_t*		heap;				/*recv sys的内存分配堆*/
+	hash_table_t*	addr_hash;			/*recv_addr的hash表，以space id和page no为KEY*/
+	ulint			n_addrs;			/**/
 };
 
 extern recv_sys_t*		recv_sys;
