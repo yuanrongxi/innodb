@@ -96,7 +96,7 @@ struct recv_sys_struct
 	ulint			recovered_offset;		/*恢复位置的偏移量*/
 
 	dulint			recovered_lsn;			/*恢复的lsn位置*/
-	dulint			limit_lsn;
+	dulint			limit_lsn;				/*日志恢复最大的lsn,暂时在日志重做的过程没有使用*/
 
 	ibool			found_corrupt_log;		/*是否开启日志恢复诊断*/
 

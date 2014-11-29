@@ -278,7 +278,7 @@ static ulint recv_find_max_checkpoint(log_group_t** max_group, ulint* max_field)
 		group->state = LOG_GROUP_CORRUPTED;
 
 		for(field = LOG_CHECKPOINT_1; field <= LOG_CHECKPOINT_2; field += LOG_CHECKPOINT_2 - LOG_CHECKPOINT_1){
-			/*从group的文件中读取一个checkpoint信息到group->checkpoint_buf里面*/
+			/*从group的文件中读取一个checkpoint信息到log_sys->checkpoint_buf里面*/
 			log_group_read_checkpoint_info(group, field);
 			
 			if(!recv_check_cp_is_consistent(buf)){ /*校验checkpoint信息的合法性*/
@@ -1269,7 +1269,7 @@ static ibool recv_sys_add_to_parsing_buf(byte* log_block, dulint scanned_lsn)
 	else if(ut_dulint_cmp(recv_sys->parse_start_lsn, scanned_lsn) > 0)
 		more_len = ut_dulint_minus(scanned_lsn, recv_sys->parse_start_lsn);
 	else
-		more_len = ut_dulint_minus(scanned_lsn, recv_sys->scanned_lsn);
+		more_len = ut_dulint_minus(recv_sys->scanned_lsn, scanned_lsn);
 
 	if(more_len == 0)
 		return FALSE;
@@ -1286,7 +1286,7 @@ static ibool recv_sys_add_to_parsing_buf(byte* log_block, dulint scanned_lsn)
 		end_offset = OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE;
 
 	ut_ad(start_offset <= end_offset);
-	if(start_offset < end_offset){ /*将block中的数据拷贝至recv_sys->buf当汇总*/
+	if(start_offset < end_offset){ /*将block中的数据拷贝至recv_sys->buf中*/
 		ut_memcpy(recv_sys->buf + recv_sys->len, log_block + start_offset, end_offset - start_offset);
 		recv_sys->len += end_offset - start_offset;
 
@@ -1345,7 +1345,7 @@ ibool recv_scan_log_recs(ibool apply_automatically, ulint available_memory, iboo
 			break;
 		}
 
-		/*检查是否flush到磁盘上*/
+		/*检查是块否flush到磁盘上*/
 		if(log_block_get_flush_bit(log_block)){
 			if(ut_dulint_cmp(scanned_lsn, *contiguous_lsn) > 0)
 				*contiguous_lsn = scanned_lsn;
@@ -1369,19 +1369,19 @@ ibool recv_scan_log_recs(ibool apply_automatically, ulint available_memory, iboo
 			recv_sys->scanned_lsn = recv_sys->parse_start_lsn;
 			recv_sys->recovered_lsn = recv_sys->parse_start_lsn;
 		}
-
+		/*scanned_lsn进行增加*/
 		scanned_lsn = ut_dulint_add(scanned_lsn, data_len);
 		if(ut_dulint_cmp(scanned_lsn, recv_sys->scanned_lsn) > 0){
-			if (recv_sys->len + 4 * OS_FILE_LOG_BLOCK_SIZE >= RECV_PARSING_BUF_SIZE){
+			if (recv_sys->len + 4 * OS_FILE_LOG_BLOCK_SIZE >= RECV_PARSING_BUF_SIZE){ /*因为一次性只读取RECV_PARSING_BUF_SIZE长度的数据，但还需要去掉块的头*/
 				fprintf(stderr, "InnoDB: Error: log parsing buffer overflow. Recovery may have failed!\n");
 
 				recv_sys->found_corrupt_log = TRUE;
 			}
-			else if(!recv_sys->found_corrupt_log) /*将日志数据放入recv_sys->buff*/
-				more_data = recv_sys_add_to_parsing_buf(log_block, scanned_lsn); /*将数据放入recv_addr当中*/
+			else if(!recv_sys->found_corrupt_log) /*将日志block数据放入recv_sys->buff*/
+				more_data = recv_sys_add_to_parsing_buf(log_block, scanned_lsn); 
 		
 			recv_sys->scanned_lsn = scanned_lsn;
-			recv_sys->scanned_lsn = log_block_get_checkpoint_no(log_block);
+			recv_sys->scanned_checkpoint_no = log_block_get_checkpoint_no(log_block);
 		}
 
 		if(data_len < OS_FILE_LOG_BLOCK_SIZE)
@@ -1391,7 +1391,7 @@ ibool recv_scan_log_recs(ibool apply_automatically, ulint available_memory, iboo
 	}
 
 	*group_scanned_lsn = scanned_lsn;
-	if(recv_needed_recovery || (recv_is_from_backup && !recv_is_making_a_backup)){
+	if(recv_needed_recovery || (recv_is_from_backup && !recv_is_making_a_backup)){ /*进行信息打印*/
 		recv_scan_print_counter ++;
 		if(finished || recv_scan_print_counter % 80 == 0){
 			fprintf(stderr, 
@@ -1402,7 +1402,7 @@ ibool recv_scan_log_recs(ibool apply_automatically, ulint available_memory, iboo
 	}
 
 	if(more_data && !recv_sys->found_corrupt_log){
-		/*尝试解析log*/
+		/*尝试解析log,将数据放入recv_addr当中*/
 		recv_parse_log_recs(store_to_hash);
 		if(store_to_hash && mem_heap_get_size(recv_sys->heap) > available_memory && apply_automatically){ /*批量将recv_addr中的数据应用到页上*/
 			recv_apply_hashed_log_recs(FALSE);
@@ -1426,7 +1426,7 @@ static void recv_group_scan_log_recs(log_group_t* group, dulint* contiguous_lsn,
 	start_lsn = *contiguous_lsn;
 
 	while(!finished){
-		end_lsn = ut_dulint_add(start_lsn, RECV_SCAN_SIZE);
+		end_lsn = ut_dulint_add(start_lsn, RECV_SCAN_SIZE); /*以2M为单位scan和恢复*/
 		/*从group file中读取一段日志数据到log_sys->buf当中*/
 		log_group_read_log_seg(LOG_RECOVER, log_sys->buf, group, start_lsn, end_lsn);
 
@@ -1444,7 +1444,7 @@ static void recv_group_scan_log_recs(log_group_t* group, dulint* contiguous_lsn,
 	}
 }
 
-/*从checkpoint中开始恢复数据*/
+/*从checkpoint中开始恢复数据,在innobase_start中limit_lsn = dulint_max*/
 ulint recv_recovery_from_checkpoint_start(ulint type, dulint limit_lsn, dulint min_flushed_lsn, dulint max_flushed_lsn)
 {
 	log_group_t*	group;
@@ -1469,13 +1469,14 @@ ulint recv_recovery_from_checkpoint_start(ulint type, dulint limit_lsn, dulint m
 		recv_sys_init(FALSE, buf_pool_get_curr_size());
 	}
 
+	/*强制不执行redo恢复*/
 	if(sys_force_recovery >= SRV_FORCE_NO_LOG_REDO){
 		fprintf(stderr, "InnoDB: The user has set SRV_FORCE_NO_LOG_REDO on\n");
 		fprintf(stderr, "InnoDB: Skipping log redo\n");
 
 		return DB_SUCCESS;
 	}
-
+	/*设置latch顺序死锁检查和recovery on*/
 	sync_order_checks_on = TRUE;
 	recv_recovery_on = TRUE;
 
@@ -1504,24 +1505,25 @@ ulint recv_recovery_from_checkpoint_start(ulint type, dulint limit_lsn, dulint m
 			"InnoDB: %s\n", log_hdr_buf + LOG_FILE_WAS_CREATED_BY_HOT_BACKUP);
 
 		ut_memcpy(log_hdr_buf + LOG_FILE_WAS_CREATED_BY_HOT_BACKUP, "    ", 4);
-		/*取消备份标志，并且回写到文件当中，因为这个文件已经作为group的恢复主本*/
+		/*取消备份标志，并且回写到文件当中，因为这个文件已经作为group的恢复主本身份*/
 		fil_io(OS_FILE_WRITE | OS_FILE_LOG, TRUE, max_cp_group->space_id, 0, 0, OS_FILE_LOG_BLOCK_SIZE, log_hdr_buf, max_cp_group);
 	}
 
 	/*统一各个组归档的file_no和offset*/
 	group = UT_LIST_GET_FIRST(log_sys->log_groups);
 	while(group){
+		/*统一从buf中解析获得archived_file_no和archived_offset*/
 		log_checkpoint_get_nth_group_info(buf, group->id, &(group->archived_file_no), &(group->archived_offset));
 		group = UT_LIST_GET_NEXT();
 	}
 
 	if(type == LOG_CHECKPOINT){
-		recv_sys->parse_start_lsn = checkpoint_lsn; /*从checkpoint出开始做日志恢复*/
+		recv_sys->parse_start_lsn = checkpoint_lsn; /*从checkpoint处的lsn开始做日志恢复*/
 		recv_sys->scanned_lsn = checkpoint_lsn;		
 		recv_sys->scanned_checkpoint_no = 0;
 		recv_sys->recovered_lsn = checkpoint_lsn;
 
-		/*需要对日志进行重做，恢复page中的数据*/
+		/*需要对日志进行重做，恢复page中的数据,checkpoint的lsn和max_flushed_lsn不重贴，表明redo log中还有其他的数据*/
 		if(ut_dulint_cmp(checkpoint_lsn, max_flushed_lsn) != 0 
 			|| ut_dulint_cmp(checkpoint_lsn, min_flushed_lsn) != 0){ /*设置开始恢复日志数据的操作*/
 				recv_needed_recovery = TRUE;
@@ -1551,7 +1553,7 @@ ulint recv_recovery_from_checkpoint_start(ulint type, dulint limit_lsn, dulint m
 				return DB_SUCCESS;
 		}
 
-		/*从group文件读取一段日志数据恢复到page当中*/
+		/*从group文件读取一段日志数据恢复到page当中,*/
 		recv_group_scan_log_recs(group, &contiguous_lsn, &group_scanned_lsn);
 		if(ut_dulint_cmp(recv_sys->scanned_lsn, checkpoint_lsn) < 0){
 			mutex_exit(&(log_sys->mutex));
