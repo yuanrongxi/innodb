@@ -29,6 +29,12 @@
     <Filter Include="fil">
       <UniqueIdentifier>{d9c0880d-f5a7-4ded-9841-3a35bba219bd}</UniqueIdentifier>
     </Filter>
+    <Filter Include="mtr">
+      <UniqueIdentifier>{c5cbc422-a94f-46fd-be1a-b86ecf3ff902}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include">
+      <UniqueIdentifier>{95eba891-ce05-43bb-8f27-df811b2b8fbd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -39,6 +45,12 @@
     </None>
     <None Include="log0recv.inl">
       <Filter>log</Filter>
+    </None>
+    <None Include="mtr0log.inl">
+      <Filter>mtr</Filter>
+    </None>
+    <None Include="dyn0dyn.inl">
+      <Filter>include</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -138,6 +150,12 @@
     <ClInclude Include="log0recv.h">
       <Filter>log</Filter>
     </ClInclude>
+    <ClInclude Include="mtr0log.h">
+      <Filter>mtr</Filter>
+    </ClInclude>
+    <ClInclude Include="dyn0dyn.h">
+      <Filter>include</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -223,6 +241,9 @@
     </ClCompile>
     <ClCompile Include="log0recv.cc">
       <Filter>log</Filter>
+    </ClCompile>
+    <ClCompile Include="mtr0log.cc">
+      <Filter>mtr</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

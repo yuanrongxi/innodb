@@ -81,11 +81,11 @@ struct recv_sys_struct
 	ibool			apply_log_recs;		/*正在应用log record到page中*/
 	ibool			apply_batch_on;		/*批量应用log record标志*/
 	
-	dulint			lsn;			
+	dulint			lsn;						
 	ulint			last_log_buf_size;
 
-	byte*			last_block;			
-	byte*			last_block_buf_start;
+	byte*			last_block;				/*恢复时最后的块内存缓冲区*/
+	byte*			last_block_buf_start;	/*最后块内存缓冲区的起始位置，因为last_block是512地址对齐的，需要这个变量记录free的地址位置*/
 	byte*			buf;					/*从日志块中读取的重做日志信息数据*/
 	ulint			len;					/*buf有效的日志数据长度*/
 
@@ -100,10 +100,11 @@ struct recv_sys_struct
 
 	ibool			found_corrupt_log;		/*是否开启日志恢复诊断*/
 
-	log_group_t*	archive_group;		/**/
+	log_group_t*	archive_group;		
+
 	mem_heap_t*		heap;				/*recv sys的内存分配堆*/
 	hash_table_t*	addr_hash;			/*recv_addr的hash表，以space id和page no为KEY*/
-	ulint			n_addrs;			/**/
+	ulint			n_addrs;			/*addr_hash中包含recv_addr的个数*/
 };
 
 extern recv_sys_t*		recv_sys;
