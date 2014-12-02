@@ -47,7 +47,7 @@ struct mem_block_info_struct
 	UT_LIST_NODE_T(mem_block_t)			list;
 };
 
-#define mem_heap_create(N)					mem_heap_create_func((N), NULL, MEM_HEAP_DYNAMIC, __FILE__, __LINE_)
+#define mem_heap_create(N)					mem_heap_create_func((N), NULL, MEM_HEAP_DYNAMIC, __FILE__, __LINE__)
 #define mem_heap_create_in_buffer(N)		mem_heap_create_func((N), NULL, MEM_HEAP_BUFFER, __FILE__, __LINE__)
 #define mem_heap_create_in_btr_search(N)	mem_heap_create_func((N), NULL, MEM_HEAP_BTR_SEARCH | MEM_HEAP_BUFFER, __FILE__, __LINE__)
 #define mem_heap_fast_create(N, B)			mem_heap_create_func((N), (B), MEM_HEAP_DYNAMIC, __FILE__, __LINE__)

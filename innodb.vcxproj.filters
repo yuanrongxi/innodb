@@ -52,6 +52,9 @@
     <None Include="dyn0dyn.inl">
       <Filter>include</Filter>
     </None>
+    <None Include="mtr0mtr.inl">
+      <Filter>mtr</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -156,6 +159,9 @@
     <ClInclude Include="dyn0dyn.h">
       <Filter>include</Filter>
     </ClInclude>
+    <ClInclude Include="mtr0mtr.h">
+      <Filter>mtr</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -243,6 +249,12 @@
       <Filter>log</Filter>
     </ClCompile>
     <ClCompile Include="mtr0log.cc">
+      <Filter>mtr</Filter>
+    </ClCompile>
+    <ClCompile Include="dyn0dyn.cc">
+      <Filter>include</Filter>
+    </ClCompile>
+    <ClCompile Include="mtr0mtr.cc">
       <Filter>mtr</Filter>
     </ClCompile>
   </ItemGroup>

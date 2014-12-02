@@ -9,7 +9,7 @@
 #undef rw_lock_t
 
 #define RW_S_LATCH	1
-#define RW_S_LATCH	2
+#define RW_X_LATCH	2
 #define RW_NO_LATCH	3
 
 #define	RW_LOCK_MAGIC_N	22643

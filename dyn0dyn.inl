@@ -147,5 +147,73 @@ UNIV_INLINE void dyn_array_close(dyn_array_t* arr, byte* ptr)
 #endif
 }
 
+UNIV_INLINE void* dyn_array_get_element(dyn_array_t* arr, ulint pos)
+{
+	dyn_block_t* arr;
+	ulint used;
+
+	ut_ad(arr);
+	ut_ad(arr->magic_n == DYN_BLOCK_MAGIC_N);
+
+	block = dyn_array_get_first_block(arr);
+	if(arr->heap != NULL){
+		used = dyn_block_get_used(arr);
+		while(pos >= used){
+			pos -= used;
+			block = UT_LIST_GET_NEXT(list, block);
+			ut_ad(block);
+
+			used = dyn_block_get_used(block);
+		}
+	}
+
+	ut_ad(block);
+	ut_ad(dyn_block_get_used(block) >= pos);
+
+	return block->data + pos;
+}
+
+UNIV_INLINE ulint dyn_array_get_data_size(dyn_array_t* arr)
+{
+	dyn_block_t*	block;
+	ulint			sum = 0;
+
+	ut_ad(arr);
+	ut_ad(arr->magic_n == DYN_BLOCK_MAGIC_N);
+
+	if(arr->heap == NULL)
+		return arr->used;
+
+	block = dyn_array_get_first_block(arr);
+	while(block != NULL){
+		sum += dyn_block_get_used(block);
+		block = dyn_array_get_next_block(arr, block);
+	}
+
+	return sum;
+}
+
+UNIV_INLINE void dyn_push_string(dyn_array_t* arr, byte* str, ulint len)
+{
+	byte*	ptr;
+	ulint	n_copied;
+
+	while(len > 0){
+		if(len > DYN_ARRAY_DATA_SIZE)
+			n_copied = DYN_ARRAY_DATA_SIZE;
+		else
+			n_copied = len;
+	}
+
+	ptr = (byte *)dyn_array_push(arr, n_copied);
+
+	ut_memcpy(ptr, str, n_copied);
+	str += n_copied;
+	len -= n_copied;
+}
+
+
+
+
 
 

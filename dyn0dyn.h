@@ -39,6 +39,7 @@ UNIV_INLINE void				dyn_push_string(dyn_array_t* arr, byte* str, ulint len);
 struct dyn_block_struct
 {
 	mem_heap_t*				heap;
+	ulint					used;
 	ulint					data[DYN_ARRAY_DATA_SIZE];
 	UT_LIST_BASE_NODE_T(dyn_block_t) base;
 	UT_LIST_NODE_T(dyn_block_t) list;
@@ -49,6 +50,9 @@ struct dyn_block_struct
 #endif
 
 };
+
+#include "dyn0dyn.inl"
+
 #endif
 
 
