@@ -63,14 +63,14 @@ typedef struct mtr_memo_slot_struct
 
 typedef struct mtr_struct
 {
-	ulint			space;
-	dyn_array_t		memo;
-	dyn_array_t		log;
-	ibool			modifications;
-	ulint			n_log_recs;
+	ulint			state;				/*mtr的状态，MTR_ACTIVE、MTR_COMMITING、MTR_COMMITTED*/
+	dyn_array_t		memo;				/*正在持有的latch列表*/
+	dyn_array_t		log;				/*mtr产生的日志*/
+	ibool			modifications;		/*是否修改了页*/
+	ulint			n_log_recs;			/*log操作页的个数*/
 	ulint			log_mode;			/*log操作模式，MTR_LOG_ALL、MTR_LOG_NONE、MTR_LOG_SHORT_INSERTS*/
-	dulint			start_lsn;			
-	dulint			end_lsn;
+	dulint			start_lsn;			/*mtr起始的LSN*/
+	dulint			end_lsn;			/*mtr结束的LSN*/
 	ulint			magic_n;			/*魔法字*/
 }mtr_t;
 

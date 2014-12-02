@@ -87,7 +87,7 @@ UNIV_INLINE byte* mlog_write_initial_log_record_fast(byte* ptr, byte type, byte*
 	block = buf_block_align(ptr);
 
 	space = buf_block_get_space(block);
-	offset = buf_block_get_page_no(block);
+	offset = buf_block_get_page_no(block); /*偏移是page no*/
 
 	if(space != 0 || offset > 0x8FFFFFFF){ /*space和page_no不对*/
 		fprintf(stderr,

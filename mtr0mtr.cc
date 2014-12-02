@@ -9,7 +9,7 @@ mtr_t* mtr_start_noninline(mtr_t* mtr)
 	return mtr_start(mtr);
 }
 
-/*释放slot的控制权*/
+/*释放page锁的控制权*/
 UNIV_INLINE void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
 {
 	void* object;
@@ -39,7 +39,7 @@ UNIV_INLINE void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
 	slot->object = NULL;
 }
 
-/*释放掉所有memo中的控制权*/
+/*释放掉所有memo中latch的控制权*/
 UNIV_INLINE void mtr_memo_pop_all(mtr_t* mtr)
 {
 	mtr_memo_slot_t*	slot;
@@ -67,7 +67,7 @@ static void mtr_log_write_full_page(page_t* page, ulint i, ulint n_pages, mtr_t*
 	ulint	len;
 
 	buf = mem_alloc(UNIV_PAGE_SIZE + 50);
-	/*将space和page_no写入到buf当红中*/
+	/*将space和page_no写入到buf当中*/
 	ptr = mlog_write_initial_log_record_fast(page, MLOG_FULL_PAGE, buf, mtr);
 	ut_memcpy(ptr, page, UNIV_PAGE_SIZE); /*将整个page的内容作为日志放入缓冲区中*/
 
@@ -246,7 +246,7 @@ void mtr_commit(mtr_t* mtr)
 	mtr->state = MTR_COMMITTING;
 #endif
 
-	if (mtr->modifications)
+	if (mtr->modifications) /*有页改动，进行日志刷盘*/
 		mtr_log_reserve_and_write(mtr);
 
 	/*释放掉mtr中所有latch的控制权*/
