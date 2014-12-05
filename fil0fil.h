@@ -14,9 +14,9 @@
 /*space address type*/
 typedef byte fil_faddr_t;
 
-#define FILE_ADDR_PAGE	0
-#define FILE_ADDR_TYPE	4
-#define FILE_ADDR_SIZE	6
+#define FIL_ADDR_PAGE	0
+#define FIL_ADDR_BYTE	4
+#define FIL_ADDR_SIZE	6
 #endif
 
 typedef struct fil_addr_struct

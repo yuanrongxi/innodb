@@ -75,6 +75,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="dyn0dyn.inl" />
+    <None Include="fsp0fsp.inl" />
+    <None Include="fut0fut.inl" />
+    <None Include="fut0lst.inl" />
     <None Include="log0log.inl" />
     <None Include="log0recv.inl" />
     <None Include="mtr0log.inl" />
@@ -85,6 +88,9 @@
     <ClInclude Include="db0err.h" />
     <ClInclude Include="dyn0dyn.h" />
     <ClInclude Include="fil0fil.h" />
+    <ClInclude Include="fsp0fsp.h" />
+    <ClInclude Include="fut0fut.h" />
+    <ClInclude Include="fut0lst.h" />
     <ClInclude Include="ha0ha.h" />
     <ClInclude Include="ha0storage.h" />
     <ClInclude Include="hash0hash.h" />
@@ -121,6 +127,8 @@
   <ItemGroup>
     <ClCompile Include="dyn0dyn.cc" />
     <ClCompile Include="fil0fil.cc" />
+    <ClCompile Include="fsp0fsp.cc" />
+    <ClCompile Include="fut0lst.cc" />
     <ClCompile Include="ha0ha.cc" />
     <ClCompile Include="ha0storage.cc" />
     <ClCompile Include="hash0hash.cc" />

@@ -35,6 +35,12 @@
     <Filter Include="include">
       <UniqueIdentifier>{95eba891-ce05-43bb-8f27-df811b2b8fbd}</UniqueIdentifier>
     </Filter>
+    <Filter Include="fsp">
+      <UniqueIdentifier>{38fdeae7-0a5a-4233-b1e0-791ce960d5b2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="fut">
+      <UniqueIdentifier>{09c430de-06d1-4900-bc9c-cbd3c6ef937c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -54,6 +60,15 @@
     </None>
     <None Include="mtr0mtr.inl">
       <Filter>mtr</Filter>
+    </None>
+    <None Include="fsp0fsp.inl">
+      <Filter>fsp</Filter>
+    </None>
+    <None Include="fut0fut.inl">
+      <Filter>fut</Filter>
+    </None>
+    <None Include="fut0lst.inl">
+      <Filter>fut</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -162,6 +177,15 @@
     <ClInclude Include="mtr0mtr.h">
       <Filter>mtr</Filter>
     </ClInclude>
+    <ClInclude Include="fsp0fsp.h">
+      <Filter>fsp</Filter>
+    </ClInclude>
+    <ClInclude Include="fut0fut.h">
+      <Filter>fut</Filter>
+    </ClInclude>
+    <ClInclude Include="fut0lst.h">
+      <Filter>fut</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -256,6 +280,12 @@
     </ClCompile>
     <ClCompile Include="mtr0mtr.cc">
       <Filter>mtr</Filter>
+    </ClCompile>
+    <ClCompile Include="fsp0fsp.cc">
+      <Filter>fsp</Filter>
+    </ClCompile>
+    <ClCompile Include="fut0lst.cc">
+      <Filter>fut</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
