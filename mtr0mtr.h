@@ -112,8 +112,8 @@ UNIV_INLINE dyn_array_t* mtr_get_log(mtr_t* mtr);
 
 UNIV_INLINE void		mtr_memo_push(mtr_t* mtr, void* object, ulint type);
 
-#define mtr_s_lock(B, MTR)	mtr_s_lock_func((B), IB__FILE__, __LINE__, (MTR))
-#define mtr_x_lock(B, MTR)  mtr_x_lock_func((B), IB__FILE__, __LINE__, (MTR))
+#define mtr_s_lock(B, MTR)	mtr_s_lock_func((B), __FILE__, __LINE__, (MTR))
+#define mtr_x_lock(B, MTR)  mtr_x_lock_func((B), __FILE__, __LINE__, (MTR))
 
 #define	MTR_BUF_MEMO_SIZE	200
 

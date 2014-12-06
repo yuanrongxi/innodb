@@ -23,9 +23,9 @@ UNIV_INLINE fil_addr_t		flst_get_first(flst_base_node_t* base, mtr_t* mtr);
 /*获得链表最后一个node地址*/
 UNIV_INLINE fil_addr_t		flst_get_last(flst_base_node_t* base, mtr_t* mtr);
 /*获得node下一个单元的地址*/
-UNIV_INLINE	fil_addr_t		flst_get_next_addr(flst_base_node_t* node, mtr_t* mtr);
+UNIV_INLINE	fil_addr_t		flst_get_next_addr(flst_node_t* node, mtr_t* mtr);
 /*获得node上一个单元的地址*/
-UNIV_INLINE fil_addr_t		flst_get_prev_addr(flst_base_node_t* node, mtr_t* mtr);
+UNIV_INLINE fil_addr_t		flst_get_prev_addr(flst_node_t* node, mtr_t* mtr);
 /*修改node对应的地址*/
 UNIV_INLINE void			flst_write_addr(fil_faddr_t* faddr, fil_addr_t addr, mtr_t* mtr);
 /*从node读取对应的地址*/

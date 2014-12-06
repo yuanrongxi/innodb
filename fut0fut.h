@@ -7,6 +7,7 @@
 
 UNIV_INLINE byte* fut_get_ptr(ulint space, fil_addr_t addr, ulint rw_latch, mtr_t* mtr);
 
+#include "fut0fut.inl"
 #endif
 
 

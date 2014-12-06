@@ -22,7 +22,7 @@ typedef byte fil_faddr_t;
 typedef struct fil_addr_struct
 {
 	ulint	page;		/*page在space中的编号*/
-	ulint	boffset;	/*page在space中的偏移量*/
+	ulint	boffset;	/*在page中的偏移量*/
 }fil_addr_t;
 
 extern fil_addr_t fil_addr_null;

@@ -162,9 +162,6 @@
     <ClInclude Include="mach0data.h">
       <Filter>mach</Filter>
     </ClInclude>
-    <ClInclude Include="fil0fil.h">
-      <Filter>fil</Filter>
-    </ClInclude>
     <ClInclude Include="log0recv.h">
       <Filter>log</Filter>
     </ClInclude>
@@ -185,6 +182,9 @@
     </ClInclude>
     <ClInclude Include="fut0lst.h">
       <Filter>fut</Filter>
+    </ClInclude>
+    <ClInclude Include="fil0fil.h">
+      <Filter>fil</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
