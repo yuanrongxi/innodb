@@ -45,7 +45,7 @@ struct fil_space_struct
 	ulint			id;					/*space id*/
 	ulint			purpose;			/*space的类型，主要有space table, log file和arch file*/
 	ulint			size;				/*space包含的页个数*/
-	ulint			n_reserved_extents; /*预留的页个数*/
+	ulint			n_reserved_extents; /*占用的页个数*/
 	hash_node_t		hash;				/*chain node的HASH表*/
 	rw_lock_t		latch;				/*space操作保护锁*/
 	ibuf_data_t*	ibuf_data;			/*space 对应的insert buffer*/

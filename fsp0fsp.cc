@@ -44,6 +44,7 @@ typedef byte	xdes_t;
 
 #define FSEG_ID						0 /*8字节*/
 #define FSEG_NOT_FULL_N_USED		8
+#define FSEG_FREE					12
 #define FSEG_NOT_FULL				(12 + FLST_NODE_SIZE)
 #define FSEG_FULL					(12 + 2 * FLST_NODE_SIZE)
 #define FSEG_MAGIC_N				(12 + 3 * FLST_NODE_SIZE)
@@ -59,7 +60,7 @@ typedef byte	xdes_t;
 
 #define	FSEG_FILLFACTOR				8
 #define FSEG_FRAG_LIMIT				FSEG_FRAG_ARR_N_SLOTS
-
+#define FSEG_FREE_LIST_LIMIT		40
 #define	FSEG_FREE_LIST_MAX_LEN		4
 
 /*区(extent)*/
@@ -809,10 +810,10 @@ static ulint fsp_seg_inode_page_find_used(page_t* page, mtr_t* mtr)
 
 static ulint fsp_seg_inode_page_find_free(page_t* page, ulint j, mtr_t* mtr)
 {
-	ulint		i;
+	ulint i;
 	fseg_inode_t*	inode;
 
-	for(i = 0; i < FSP_SEG_INODES_PER_PAGE; i ++){
+	for(i = j; i < FSP_SEG_INODES_PER_PAGE; i ++){
 		inode = fsp_seg_inode_page_get_nth_inode(page, i, mtr);
 		if(ut_dulint_cmp(mach_read_from_8(inode + FSEG_ID), ut_dulint_zero) == 0)
 			return i;
@@ -821,8 +822,354 @@ static ulint fsp_seg_inode_page_find_free(page_t* page, ulint j, mtr_t* mtr)
 	return ULINT_UNDEFINED;
 }
 
+/*分配一个空闲的inode页*/
+static bool fsp_alloc_seg_inode_page(fsp_header_t* space_header, mtr_t* mtr)
+{
+	fseg_inode_t*	inode;
+	page_t*		page;
+	ulint		page_no;
+	ulint		space;
+	ulint		i;
 
+	space = buf_frame_get_sapce_id(space_header);
+	page_no = fsp_alloc_free_page(space, 0, mtr); /*获得一个空闲的page*/
+	if(page_no == FIL_NULL)
+		return FALSE;
 
+	page = buf_get_get(space, page_no, RW_X_LATCH, mtr);
+	buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
 
+	/*初始化inode页*/
+	for(i = 0; i < FSP_SEG_INODES_PER_PAGE; i ++){
+		inode = fsp_seg_inode_page_get_nth_inode(page, i, mtr);
+		mlog_write_dulint(inode + FSEG_ID, ut_dulint_zero, MLOG_8BYTES, mtr);
+	}
+	/*将页插入到FSP_SEG_INODES_FREE的最后*/
+	flst_add_last(space_header + FSP_SEG_INODES_FREE, page + FSEG_INODE_PAGE_NODE, mtr);
 
+	return TRUE;
+}
+
+/*分配一个新的segment inode*/
+static fseg_inode_t* fsp_alloc_seg_inode(fsp_header_t* space_header, mtr_t* mtr)
+{
+	ulint		page_no;
+	page_t*		page;
+	fseg_inode_t*	inode;
+	ibool		success;
+	ulint		n;
+
+	/*没有空闲的inode页*/
+	if(flst_get_len(space_header + FSP_SEG_INODES_FREE, mtr) == 0){
+		if(fsp_alloc_seg_inode_page(space_header, mtr) == FALSE)
+			return NULL;
+	}
+
+	page_no = flst_get_first(space_header + FSEP_SEG_INODES_FREE, mtr).page;
+	page = buf_page_get(buf_frame_get_space_id(space_header), page, RW_X_LATCH, mtr);
+	buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
+
+	n = fsp_seg_inode_page_find_free(pge, 0, mtr);
+	ut_a(n != ULINT_UNDEFINED);
+
+	inode = fsp_seg_inode_page_get_nth_inode(page, n, mtr);
+
+	if(ULINT32_UNDEFINED == fsp_seg_inode_page_find_free(page, n + 1, mtr)){ /*这个inode page已经满了,将其从FSP_SEG_INODES_FREE删除*/
+		flst_remove(space_header + FSP_SEG_INODES_FREE, page + FSEG_INODE_PAGE_NODE, mtr);
+		flst_add_last(space_header + FSP_SEG_INODES_FULL, page + FSEG_INODE_PAGE_NODE, mtr);
+	}
+
+	return inode;
+}
+
+/*释放一个segment inode*/
+static void fsp_free_seg_inode(ulint space, fseg_inode_t* inode, mtr_t* mtr)
+{
+	page_t*		page;
+	fsp_header_t*	space_header;
+
+	page = buf_frame_align(inode);
+
+	space_header = fsp_get_space_header(space, mtr);
+	page = buf_frame_align(inode);
+
+	/*魔法字校验*/
+	ut_ad(mach_read_from_4(inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
+	if(ULINT_UNDEFINED == fsp_seg_inode_page_find_free(page, 0, mtr)){ /*这个page存在空闲的inode*/
+		flst_remove(space_header + FSP_SEG_INODES_FULL, page + FSEG_INODE_PAGE_NODE, mtr);
+		flst_add_last(space_header + FSP_SEG_INODES_FREE, page + FSEG_INODE_PAGE_NODE, mtr);
+	}
+	/*重置seg_id和魔法字*/
+	mlog_write_dulint(inode + FSEG_ID, ut_dulint_zero, MLOG_8BYTES, mtr); 
+	mlog_write_ulint(inode + FSEG_MAGIC_N, 0, MLOG_4BYTES, mtr);
+
+	/*这个页中的inode全部空闲，释放对页的占用*/
+	if(ULINT_UNDEFINED == fsp_seg_inode_page_find_used(page, mtr)){
+		flst_remove(space_header + FSP_SEG_INODES_FREE, page + FSEG_INODE_PAGE_NODE, mtr);
+		fsp_free_page(space, buf_frame_get_page_no(page), mtr);		
+	}
+}
+
+static fseg_inode_t* fseg_inode_get(fseg_header_t* header, mtr_t* mtr)
+{
+	fil_addr_t	inode_addr;
+	fseg_inode_t*	inode;
+
+	/*获得当前segment inode的链表fil_addr_t地址*/
+	inode_addr.page = mach_read_from_4(header + FSEG_HDR_PAGE_NO);
+	inode_addr.boffset = mach_read_from_2(header + FSEG_HDR_OFFSET);
+	/*获得对应inode的指针地址*/
+	inode = fut_get_ptr(mach_read_from_4(header + FSEG_HDR_SPACE), inode_addr, RW_X_LATCH, mtr);
+	/*魔法字校验*/
+	ut_ad(mach_read_from_4(inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
+
+	return inode;
+}
+
+/*获得inode指定位置的page no*/
+UNIV_INLINE ulint fseg_get_nth_frag_page_no(fseg_inode_t* inode, ulint n, mtr_t* mtr)
+{
+	ut_ad(inode && mtr);
+	ut_ad(n < FSEG_FRAG_ARR_N_SLOTS);
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(inode), MTR_MEMO_PAGE_X_FIX));
+
+	return(mach_read_from_4(inode + FSEG_FRAG_ARR + n * FSEG_FRAG_SLOT_SIZE));
+}
+
+UNIV_INLINE void fseg_set_nth_frag_page_no(fseg_inode_t* inode, ulint n, ulint page_no, mtr_t* mtr)
+{
+	ut_ad(inode && mtr);
+	ut_ad(n < FSEG_FRAG_ARR_N_SLOTS);
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(inode), MTR_MEMO_PAGE_X_FIX));
+	/*将page no写入到对应的slot位置上*/
+	mlog_write_ulint(inode + FSEG_FRAG_ARR + n * FSEG_FRAG_SLOT_SIZE, page_no, MLOG_4BYTES, mtr);
+}
+
+/*在segment的inode当中获得一个空闲的page的slot*/
+static ulint fseg_find_free_frag_page_slot(fseg_inode_t* inode, mtr_t* mtr)
+{
+	ulint i;
+	ulint page_no;
+
+	ut_ad(inode & mtr);
+	for(i = 0; i < FSEG_FRAG_ARR_N_SLOTS; i ++){
+		page_no = fseg_get_nth_frag_page_no(inode, i, mtr); /*获得*/
+		if(page_no == FIL_NULL)
+			return i;
+	}
+
+	return ULINT_UNDEFINED;
+}
+
+/*在inode当中查找最后一个被使用的页的slot*/
+static ulint fseg_find_last_used_frag_page_slot(fseg_inode_t* inode, mtr_t* mtr)
+{
+	ulint i;
+	ulint page_no;
+
+	ut_ad(inode && mtr);
+
+	/*从后面查找到前面，应该为的是效率问题*/
+	for(i = 0; i < FSEG_FRAG_ARR_N_SLOTS; i ++){
+		page_no = fseg_get_nth_frag_page_no(inode, FSEG_FRAG_ARR_N_SLOTS - i -1, mtr);
+		if(page_no != FIL_NULL)
+			return FSEG_FRAG_ARR_N_SLOTS - i - 1;
+	}
+
+	return ULINT_UNDEFINED;
+}
+
+/*获取inode中已经使用的page数*/
+static ulint fseg_get_n_frag_pages(fseg_inode_t* inode, mtr_t* mtr)
+{
+	ulint	i;
+	ulint	count = 0;
+
+	for(i = 0; i < FSEG_FRAG_ARR_N_SLOTS; i ++)
+		if(FIL_NULL != fseg_get_nth_frag_page_no(inode, i, mtr))
+			count ++;
+
+	return count;
+}
+
+/*创建一个segment，返回*/
+page_t* fseg_create_general(ulint space, ulint page, ulint byte_offset, ibool has_done_reservation, mtr_t* mtr)
+{
+	fsp_header_t*	space_header;
+	fseg_inode_t*	inode;
+	dulint		seg_id;
+	fseg_header_t*	header;
+	rw_lock_t*	latch;
+	ibool		success;
+	page_t*		ret	= NULL;
+	ulint		i;
+
+	ut_ad(mtr);
+
+	/*获得fseg_header*/
+	if(page != 0)
+		header = byte_offset + buf_page_get(space, page, RW_X_LATCH, mtr);
+
+	ut_ad(!mutex_own(&kernel_mutex) || mtr_memo_contains(mtr, fil_space_get_latch(space), MTR_MEMO_X_LOCK));
+
+	/*获得space的x-latch控制权*/
+	latch = fil_space_get_latch(space);
+	mtr_x_lock(latch, mtr); /*MTR_MEMO_X_LOCK*/
+
+	if(rw_lock_get_reader_count(latch) == 1)
+		ibuf_free_excess_pages(space);
+
+	if(!has_done_reservation){
+		success = fsp_reserve_free_extents(space, 2, FSP_NORMAL, mtr);
+		if(!success)
+			return NULL;
+	}
+
+	space_header = fsp_get_space_header(space, mtr);
+	/*获得一个空闲的inode*/
+	inode = fsp_alloc_seg_inode(space_header, mtr);
+	if(inode == NULL)
+		goto funct_exit;
+
+	seg_id = mtr_read_dulint(space_header + FSP_SEG_ID, MLOG_8BYTES, mtr);
+	/*seg id  + 1*/
+	mlog_write_dulint(space_header + FSP_SEG_ID, ut_dulint_add(seg_id, 1), MLOG_8BYTES, mtr);
+
+	/*对inode信息进行初始化*/
+	mlog_write_dulint(inode + FSEG_ID, seg_id, MLOG_8BYTES, mtr);
+	mlog_write_ulint(inode + FSEG_NOT_FULL_N_USED, 0, MLOG_4BYTES, mtr); 
+	mlog_write_ulint(inode + FSEG_MAGIC_N, FSEG_MAGIC_N_VALUE, MLOG_4BYTES, mtr);
+
+	for(i = 0; i < FSEG_FRAG_ARR_N_SLOTS; i ++)
+		fseg_set_nth_frag_page_no(inode, i, FIL_NULL, mtr);
+
+	if(page == 0){
+		page = fseg_alloc_free_page_low(space, inode, 0, FSP_UP, mtr);
+		if(page == FIL_NULL){
+			fsp_free_seg_inode(space, inode, mtr);
+			goto funct_exit;
+		}
+		/*获得header的位置*/
+		header = byte_offset + buf_page_get(space, page, RW_X_LATCH, mtr);
+	}
+
+	/*设置segment的信息*/
+	mlog_write_ulint(header + FSEG_HDR_OFFSET, inode - buf_frame_align(inode), MLOG_2BYTES, mtr);
+	mlog_write_ulint(header + FSEG_HDR_PAGE_NO, buf_frame_get_page_no(inode), MLOG_4BYTES, mtr);
+	mlog_write_ulint(header + FSEG_HDR_SPACE, space, MLOG_4BYTES, mtr);
+
+	ret = buf_frame_align(header);
+
+funct_exit:
+	if (!has_done_reservation)
+		fil_space_release_free_extents(space, 2);
+
+	return ret;
+}
+
+page_t* fseg_create(ulint space, ulint page, ulint byte_offset, mtr_t* mtr)
+{
+	return fseg_create_general(space, page, byte_offset, FALSE, mtr);
+}
+
+/*计算fseg_inode当中所有的page数和已经使用的page数量*/
+static ulint fseg_n_reserved_pages_low(fseg_inode_t* node, ulint* used, mtr_t* mtr)
+{
+	ulint	ret;
+
+	ut_ad(inode && used && mtr);
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(inode), MTR_MEMO_PAGE_X_FIX));
+
+	*used = mtr_read_ulint(inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr) 
+		+ FSP_EXTENT_SIZE * flst_get_len(inode + FSEG_FULL, mtr) + fseg_get_n_frag_pages(inode, mtr);
+
+	/*计算segment中所有page数*/
+	ret = fseg_get_n_frag_pages(inode, mtr) + FSP_EXTENT_SIZE * flst_get_len(inode + FSEG_FREE, mtr)
+		+ FSP_EXTENT_SIZE * flst_get_len(inode + FSEG_NOT_FULL, mtr)
+		+ FSP_EXTENT_SIZE * flst_get_len(inode + FSEG_FULL, mtr);
+	
+	return ret;
+}
+
+ulint fseg_n_reserved_pages(fseg_header_t* node, ulint* used, mtr_t* mtr)
+{
+	ulint			ret;
+	fseg_header_t*	inode;
+	ulint			space;
+
+	space = buf_frame_get_space_id(header);
+	ut_ad(!mutex_own(&kernel_mutex) || mtr_memo_contains(mtr, fil_space_get_latch(space), MTR_MEMO_X_LOCK));
+
+	mtr_x_lock(fil_space_get_latch(space), mtr);
+	/*获取当前segment的inode*/
+	inode = fseg_inode_get(header, mtr);
+
+	return fseg_n_reserved_pages_low(inode, used, mtr);
+}
+
+static void fseg_fill_free_list(fseg_inode_t* inode, ulint space, ulint hint, mtr_t* mtr)
+{
+	xdes_t*	descr;
+	ulint	i;
+	dulint	seg_id;
+	ulint	reserved;
+	ulint	used;
+
+	ut_ad(inode && mtr);
+
+	reserved = fseg_n_reserved_pages_low(inode, &used, mtr);
+	if(reserved < FSEG_FREE_LIST_LIMIT * FSP_EXTENT_SIZE) /*达到一个segment的最大的page数*/
+		return;
+
+	/*inode还有free的page*/
+	if(flst_get_len(inode + FSEG_FREE, mtr) > 0)
+		return 0;
+
+	for(i = 0; i < FSEG_FREE_LIST_MAX_LEN; i ++){
+		descr = xdes_get_descriptor(space, hint, mtr);
+		if(descr == NULL || (XDES_FREE != xdes_get_state(descr, mtr)))
+			return ;
+
+		/*获得一个新的extent*/
+		descr = fsp_alloc_free_extent(space, hint, mtr);
+		xdes_set_state(descr, XDES_FSEG, mtr);
+		/*更新seg id*/
+		seg_id = mtr_read_dulint(inode + FSEG_ID, MLOG_8BYTES, mtr);
+		mlog_write_dulint(descr + XDES_ID, seg_id, MLOG_8BYTES, mtr);
+
+		/*加入到segment的空闲extent列表中*/
+		flst_add_last(inode + FSEG_FREE, descr + XDES_FLST_NODE, mtr);
+
+		hint += FSP_EXTENT_SIZE;
+	}
+}
+
+static xdes_t* fseg_alloc_free_extent(fseg_inode_t* inode, ulint space, mtr_t* mtr)
+{
+	xdes_t*		descr;
+	dulint		seg_id;
+	fil_addr_t 	first;
+
+	/*inode中有空闲的*/
+	if(flst_get_len(inode + FSEG_FREE, mtr) > 0){
+		first = flst_get_first(inode + FSEG_FREE, mtr);
+		descr = xdes_lst_get_descriptor(space, first, mtr);
+	}
+	else{
+		descr = fsp_alloc_free_extent(space, 0, mtr);
+		if(descr == NULL)
+			return NULL;
+
+		seg_id = mtr_read_dulint(inode + FSEG_ID, MLOG_8BYTES, mtr);
+		/*设置descr的状态信息*/
+		xdes_set_state(descr, XDES_FSEG, mtr);
+		mlog_write_dulint(descr + XDES_ID, seg_id, MLOG_8BYTES, mtr);
+
+		flst_add_last(inode + FSEG_FREE, descr + XDES_FLST_NODE, mtr);
+		/*判断申请的区是不是已经全部用完了page,如果用完了，开启一个新的extent*/
+		fseg_fill_free_list(inode, space, xdes_get_offset(descr) + FSP_EXTENT_SIZE, mtr);
+	}
+
+	return descr;
+}
 
