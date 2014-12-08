@@ -1175,7 +1175,22 @@ static xdes_t* fseg_alloc_free_extent(fseg_inode_t* inode, ulint space, mtr_t* m
 }
 
 static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulint hint, byte direction, mtr_t* mtr)
-{
+{ 
+	dulint		seg_id;
+	ulint		used;
+	ulint		reserved;
+	fil_addr_t	first;
+	xdes_t*		descr;		/* extent of the hinted page */
+	ulint		ret_page;	/* the allocated page offset, FIL_NULL if could not be allocated */
+	xdes_t*		ret_descr;	/* the extent of the allocated page */
+	page_t*		page;
+	ibool		frag_page_allocated = FALSE;
+	ulint		n;
 
+	ut_ad(mtr);
+	ut_ad((direction >= FSP_UP) && (direction <= FSP_NO_DIR));
+	ut_ad(mach_read_from_4(seg_inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
+
+	seg_id = mtr_read_dulint(seg_inode + FSEG_ID, MLOG_8BYTES, mtr);
 }
 
