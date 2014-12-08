@@ -1044,6 +1044,7 @@ page_t* fseg_create_general(ulint space, ulint page, ulint byte_offset, ibool ha
 		fseg_set_nth_frag_page_no(inode, i, FIL_NULL, mtr);
 
 	if(page == 0){
+		/*获取一个页*/
 		page = fseg_alloc_free_page_low(space, inode, 0, FSP_UP, mtr);
 		if(page == FIL_NULL){
 			fsp_free_seg_inode(space, inode, mtr);
@@ -1171,5 +1172,10 @@ static xdes_t* fseg_alloc_free_extent(fseg_inode_t* inode, ulint space, mtr_t* m
 	}
 
 	return descr;
+}
+
+static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulint hint, byte direction, mtr_t* mtr)
+{
+
 }
 
