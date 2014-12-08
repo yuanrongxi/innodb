@@ -1192,5 +1192,365 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 	ut_ad(mach_read_from_4(seg_inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
 
 	seg_id = mtr_read_dulint(seg_inode + FSEG_ID, MLOG_8BYTES, mtr);
+
+	ut_ad(ut_dulint_cmp(seg_id, ut_dulint_zero) > 0);
+
+	/*获得inode的page数量*/
+	reserved = fseg_n_reserved_pages_low(seg_inode, &used, mtr);
+
+	descr = xdes_get_descriptor(space, hint, mtr);
+	if(descr == NULL){
+		hint = 0;
+		descr = xdes_get_descriptor(space, hint, mtr);
+	}
+
+	/*descr中的hit对应的也是空闲的*/
+	if((xdes_get_state(descr, mtr) == XDES_FSEG) && (0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, mtr), seg_id))
+		&& (xdes_get_bit(descr, XDES_FREE_BIT, hint % FSP_EXTENT_SIZE, mtr) == TRUE)){
+			ret_descr = descr;
+			ret_page = hint;
+	}
+	/*descr是空闲状态，但segment中的空闲page数量 < 1/8*/
+	else if((xdes_get_state(descr, mtr) == XDES_FREE) && ((reserved - used) < reserved / FSEG_FILLFACTOR)
+		&& (used >= FSEG_FRAG_LIMIT)){
+			/*获取一个新的区*/
+		ret_descr = fsp_alloc_free_extent(space, hint, mtr);
+		ut_a(ret_descr == descr);
+
+		xdes_set_state(ret_descr, XDES_FSEG, mtr);
+		mlog_write_dulint(ret_descr + XDES_ID, seg_id, MLOG_8BYTES, mtr);
+
+		flst_add_last(seg_inode + FSEG_FREE, ret_descr + XDES_FLST_NODE, mtr);
+		/*将剩余的page隐射到对应的extent上，用extent进行segment填充*/
+		fseg_fill_free_list(seg_inode, space, hint + FSP_EXTENT_SIZE, mtr);
+
+		ret_page = hint;
+	}
+	/*segment的页已经达到最大使用数量*/
+	else if((direction != FSP_NO_DIR) && ((reserved - used) < reserved / FSEG_FILLFACTOR)
+		&& (used >= FSEG_FRAG_LIMIT) && (NULL != (ret_descr = fseg_alloc_free_extent(seg_inode, space, mtr)))){
+		ret_page = xdes_get_offset(ret_descr);	
+		if(direction == FSP_DOWN)
+			ret_page += FSP_EXTENT_SIZE - 1;
+	}
+	/*descr中的hit对应的页不是空闲的，在其中查找空闲的页*/
+	else if((xdes_get_state(descr, mtr) == XDES_FSEG) 
+		&& (0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, mtr), seg_id))
+		&& (!xdes_is_full(descr, mtr))){ 
+			ret_descr = descr;
+			/*定位到新的空闲page*/
+			ret_page = xdes_get_offset(ret_descr) + xdes_find_bit(ret_descr, XDES_FREE_BIT, TRUE, hint % FSP_EXTENT_SIZE, mtr);
+	}
+	else if(reserved - used > 0){ /*fseg inode不需要做任何调整*/
+		if (flst_get_len(seg_inode + FSEG_NOT_FULL, mtr) > 0)
+			first = flst_get_first(seg_inode + FSEG_NOT_FULL,mtr);
+		else if (flst_get_len(seg_inode + FSEG_FREE, mtr) > 0)
+			first = flst_get_first(seg_inode + FSEG_FREE, mtr);
+		else
+			ut_error;
+
+		ret_descr = xdes_lst_get_descriptor(space, first, mtr);
+		ret_page = xdes_get_offset(ret_descr) + xdes_find_bit(ret_descr, XDES_FREE_BIT, TRUE, 0, mtr);
+	}
+	else if(used < FSEG_FRAG_LIMIT){ /*inode没有空闲的页，但是fseg中还可以使用更多的页*/
+		/*分配一个新的页，并将其插入到seg inode当中*/
+		ret_page = fsp_alloc_free_page(space, hint, mtr);
+		ret_descr = NULL;
+
+		frag_page_allocated = TRUE;
+		if(ret != FIL_NULL){
+			n = fseg_find_free_frag_page_slot(seg_inode, mtr);
+			ut_a(n != FIL_NULL);
+
+			fseg_set_nth_frag_page_no(seg_inode, n, ret_page, mtr);
+		}
+	}
+	else{
+		ret_descr = fseg_alloc_free_extent(seg_inode, space, mtr);
+
+		if (ret_descr == NULL)
+			ret_page = FIL_NULL;
+		else
+			ret_page = xdes_get_offset(ret_descr);
+	}
+
+	if(ret_page == FIL_NULL)
+		return FIL_NULL;
+
+	/*页还没有分配，对页进行创建并初始化*/
+	if(!frag_page_allocated){
+		page = buf_page_create(space, ret_page, mtr);
+		ut_a(page == buf_page_get(space, ret_page, RW_X_LATCH, mtr));
+		buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
+
+		fsp_init_file_page(page, mtr);
+
+		ut_ad(xdes_get_descriptor(space, ret_page, mtr) == ret_descr);
+		ut_ad(xdes_get_bit(ret_descr, XDES_FREE_BIT, ret_page % FSP_EXTENT_SIZE, mtr) == TRUE);
+
+		fseg_mark_page_used(seg_inode, space, ret_page, mtr);
+	}
+
+	return ret_page;
 }
+
+ulint fseg_alloc_free_page_general(fseg_header_t* seg_header, ulint hint, byte direction, ibool has_done_reservation, mtr_t* mtr)
+{
+	fseg_inode_t*	inode;
+	ulint		space;
+	rw_lock_t*	latch;
+	ibool		success;
+	ulint		page_no;
+
+	space = buf_frame_get_space_id(seg_header);
+
+	ut_ad(!mutex_own(&kernel_mutex) || mtr_memo_contains(mtr, fil_space_get_latch(space), MTR_MEMO_X_LOCK));
+
+	latch = fil_space_get_latch(space);
+	mtr_x_lock(latch, mtr);
+
+	if(rw_lock_get_x_lock_count(latch) == 1){
+		ibuf_free_excess_pages(space);
+	}
+
+	/*获得space当前使用的inode*/
+	inode = fseg_inode_get(seg_header, mtr);
+	if(!has_done_reservation){
+		success = fsp_reserve_free_extents(space, 2, FSP_NORMAL, mtr);
+		if(!success)
+			return FIL_NULL;
+	}
+
+	page_no = fseg_alloc_free_page_low(buf_frame_get_space_id(inode), inode, hint, direction, mtr);
+	if(!has_done_reservation)
+		fil_space_release_free_extents(space, 2);
+}
+
+ulint fseg_alloc_free_page(fseg_header_t* seg_header, ulint hint, byte direction, mtr_t* mtr)
+{
+	return fseg_alloc_free_page_general(seg_header, hint, direction, FALSE, mtr);
+}
+
+ibool fsp_reserve_free_extents(ulint space, ulint n_ext, ulint alloc_type, mtr_t* mtr)
+{
+	fsp_header_t*	space_header;
+	rw_lock_t*	latch;
+	ulint		n_free_list_ext;
+	ulint		free_limit;
+	ulint		size;
+	ulint		n_free;
+	ulint		n_free_up;
+	ulint		reserve;
+	ibool		success;
+	ulint		n_pages_added;
+
+	ut_ad(mtr);
+	ut_ad(!mutex_own(&kernel_mutex) || mtr_memo_contains(mtr, fil_space_get_latch(space), MTR_MEMO_X_LOCK));
+
+	latch = fil_space_get_latch(space);
+	mtr_x_lock(latch, mtr);
+
+	space_header = fsp_get_space_header(space, mtr);
+try_begin:
+	size = mtr_read_ulint(space_header + FSP_SIZE, MLOG_4BYTES, mtr);
+	n_free_list_ext = flst_get_len(space_header + FSP_FREE, mtr);
+	free_limit = mtr_read_ulint(space_header + FSP_FREE_LIMIT, MLOG_4BYTES, mtr);
+
+	n_free_up = (size - free_limit) / FSP_EXTENT_SIZE;
+	if(n_free_up > 0){
+		n_free_up--;
+		n_free_up = n_free_up - n_free_up / (XDES_DESCRIBED_PER_PAGE / FSP_EXTENT_SIZE);
+	}
+
+	n_free = n_free_list_ext + n_free_up;
+
+	if(alloc_type == FSP_NORMAL){
+		reserve = 2 + ((size / FSP_EXTENT_SIZE) * 5) / 100;
+		if(n_free <= reserve + n_ext)/*物理文件空间不够*/
+			goto try_to_extend;
+	}
+	else if(alloc_type == FSP_UNDO){
+		reserve = 1 + ((size / FSP_EXTENT_SIZE) * 1) / 100;
+		if (n_free <= reserve + n_ext) /*物理文件空间不够*/
+			goto try_to_extend;
+	}
+	else
+		ut_a(alloc_type == FSP_CLEANING);
+
+	/*对文件空间占用的判断*/
+	success = fil_space_reserve_free_extents(space, n_free, n_ext);
+	if(success)
+		return TRUE;
+
+try_to_extend:
+	success = fsp_try_extend_last_file(&n_pages_added, space, space_header, mtr);
+	if(success && n_pages_added > 0)
+		goto try_begin;
+
+	return FALSE;
+}
+
+/*space可用的空间*/
+ulint fsp_get_available_space_in_free_extents(ulint space)
+{
+	fsp_header_t*	space_header;
+	ulint		n_free_list_ext;
+	ulint		free_limit;
+	ulint		size;
+	ulint		n_free;
+	ulint		n_free_up;
+	ulint		reserve;
+	rw_lock_t*	latch;
+	mtr_t		mtr;
+
+	ut_ad(!mutex_own(&kernel_mutex));
+	mtr_start(&mtr);
+
+	latch = fil_space_get_latch(space);
+	mtr_x_lock(latch, &mtr);
+
+	space_header = fsp_get_space_header(space, &mtr);
+	size =  mtr_read_ulint(space_header + FSP_SIZE, MLOG_4BYTES, &mtr);
+	n_free_list_ext = flst_get_len(space_header + FSP_FREE, &mtr);
+	free_limit = mtr_read_ulint(space_header + FSP_FREE_LIMIT, MLOG_4BYTES, &mtr);
+
+	mtr_commit(&mtr);
+
+	n_free_up = (size - free_limit) / FSP_EXTENT_SIZE;
+
+	if (n_free_up > 0) {
+		n_free_up--;
+		n_free_up = n_free_up - n_free_up / (XDES_DESCRIBED_PER_PAGE / FSP_EXTENT_SIZE);
+	}
+
+	n_free = n_free_list_ext + n_free_up;
+
+	reserve = 2 + ((size / FSP_EXTENT_SIZE) * 5) / 100;
+	if(reserve > n_free)
+		return 0;
+
+	return (n_free - reserve) * FSP_EXTENT_SIZE * (UNIV_PAGE_SIZE / 1024);
+}
+
+/*标记一个已占用的page*/
+static void fseg_mark_page_used(fseg_inode_t* seg_inde, ulint space, ulint page, mtr_t* mtr)
+{
+	xdes_t*	descr;
+	ulint	not_full_n_used;
+
+	descr = xdes_get_descriptor(space, page, mtr);
+	ut_ad(mtr_read_ulint(seg_inode + FSEG_ID, MLOG_4BYTES, mtr) == mtr_read_ulint(descr + XDES_ID, MLOG_4BYTES, mtr));
+
+	if(xdes_is_free(descr, mtr)){ /*将extent从free列表中移到FSEG_NOT_FULL，因为它有一个page即将被使用*/
+		flst_remove(seg_inode + FSEG_FREE, descr + XDES_FLST_NODE, mtr);
+		flst_add_last(seg_inode + FSEG_NOT_FULL, descr + XDES_FLST_NODE, mtr);
+	}
+
+	ut_ad(xdes_get_bit(descr, XDES_FREE_BIT, page % FSP_EXTENT_SIZE, mtr) = TRUE);
+	/*设置占用标志*/
+	xdes_set_bit(descr, XDES_FREE_BIT, page % FSP_EXTENT_SIZE, FALSE, mtr);
+
+	not_full_n_used = mtr_read_ulint(seg_inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr);
+	not_full_n_used ++;
+
+	mlog_write_ulint(seg_inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr);
+	if(xdes_is_full(descr, mtr)){ /*extent满了，将extent从FSEG_NOT_FULL 移到FSEG_FULL*/
+		flst_remove(seg_inode + FSEG_NOT_FULL, descr + XDES_FLST_NODE, mtr);
+		flst_add_last(seg_inode + FSEG_FULL, descr + XDES_FLST_NODE, mtr);
+
+		mlog_write_ulint(seg_inode + FSEG_NOT_FULL_N_USED, not_full_n_used - FSP_EXTENT_SIZE, MLOG_4BYTES, mtr);
+	}
+}
+
+static void fseg_free_page_low(fseg_inode_t* seg_inode, ulint space, ulint page, mtr_t* mtr)
+{
+	xdes_t*	descr;
+	ulint	not_full_n_used;
+	ulint	state;
+	ulint	i;
+	char	errbuf[200];
+
+	ut_ad(seg_inode && mtr);
+	ut_ad(mach_read_from_4(seg_inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
+
+	btr_search_drop_page_hash_when_freed(space, page);
+
+	descr = xdes_get_descriptor(space, page, mtr);
+	ut_a(descr);
+	if(xdes_get_bit(descr, XDES_FREE_BIT, page % FSP_EXTENT_SIZE, mtr) != FALSE){ /*已经是空闲状态*/
+		ut_sprintf_buf(errbuf, descr, 40);
+		fprintf(stderr, "InnoDB: Dump of the tablespace extent descriptor: %s\n", errbuf);
+
+		fprintf(stderr,
+			"InnoDB: Serious error! InnoDB is trying to free page %lu\n"
+			"InnoDB: though it is already marked as free in the tablespace!\n"
+			"InnoDB: The tablespace free space info is corrupt.\n"
+			"InnoDB: You may need to dump your InnoDB tables and recreate the whole\n"
+			"InnoDB: database!\n", page);
+
+		fprintf(stderr,
+			"InnoDB: If the InnoDB recovery crashes here, see section 6.1\n"
+			"InnoDB: of http://www.innodb.com/ibman.html about forcing recovery.\n");
+
+		ut_a(0);
+	}
+
+	state = xdes_get_state(descr, mtr);
+	if(state != XDES_FSEG){
+		for(i = 0;; i++){
+			/*将槽位赋空*/
+			if(fseg_get_nth_frag_page_no(seg_inode, i, mtr) == page){
+				fseg_set_nth_frag_page_no(seg_inode, i, FIL_NULL, mtr);
+				break;
+			}
+		}
+
+		/*释放page*/
+		fsp_free_page(space, page, mtr);
+		return ;
+	}
+
+	ut_a(0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, mtr), mtr_read_dulint(seg_inode + FSEG_ID, MLOG_8BYTES, mtr)));
+
+	not_full_n_used = mtr_read_ulint(seg_inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr);
+	if (xdes_is_full(descr, mtr)) { /*修改inode信息*/
+		flst_remove(seg_inode + FSEG_FULL, descr + XDES_FLST_NODE, mtr);
+		flst_add_last(seg_inode + FSEG_NOT_FULL, descr + XDES_FLST_NODE, mtr);
+
+		mlog_write_ulint(seg_inode + FSEG_NOT_FULL_N_USED, not_full_n_used + FSP_EXTENT_SIZE - 1, MLOG_4BYTES, mtr);
+	}
+	else{
+		ut_a(not_full_n_used > 0);
+		mlog_write_ulint(seg_inode + FSEG_NOT_FULL_N_USED, not_full_n_used - 1, MLOG_4BYTES, mtr);
+	}
+
+	xdes_set_bit(descr, XDES_FREE_BIT, page % FSP_EXTENT_SIZE, TRUE, mtr);
+	xdes_set_bit(descr, XDES_CLEAN_BIT, page % FSP_EXTENT_SIZE, TRUE, mtr);
+
+	if (xdes_is_free(descr, mtr)){ /*xdes是所有的页是空的，从fseg inode中删除并且释放掉extent*/
+		flst_remove(seg_inode + FSEG_NOT_FULL, descr + XDES_FLST_NODE, mtr);
+		fsp_free_extent(space, page, mtr);
+	}
+}
+
+/*释放一个页*/
+void fseg_free_page(fseg_header_t* seg_header, ulint space, ulint page, mtr_t* mtr)
+{
+	fseg_inode_t*	seg_inode;
+	ut_ad(!mutex_own(&kernel_mutex) || mtr_memo_contains(mtr, fil_space_get_latch(space), MTR_MEMO_X_LOCK));
+
+	mtr_x_lock(fil_space_get_latch(space), mtr);
+	
+	seg_inode = fseg_inode_get(seg_header, mtr);
+	/*释放页*/
+	fseg_free_page_low(seg_inode, space, page, mtr);
+
+#ifdef UNIV_DEBUG_FILE_ACCESSES
+	buf_page_set_file_page_was_freed(space, page);
+#endif
+}
+
+
+
+
 

@@ -74,11 +74,10 @@ UNIV_INLINE ulint ut_bit_set_nth(ulint a, ulint n, ibool val)
 {
 	ut_ad(n < 8 * sizeof(ulint));
 
-	if(val){
-		return (((ulint)1 << n) | a);
-	}
-	else{
-		return (((ulint)1 << n) & a);
+	if (val) {
+		return((1 << n) | a);
+	} else {
+		return(~(1 << n) & a);
 	}
 }
 
