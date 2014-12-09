@@ -30,7 +30,7 @@ typedef byte	xdes_t;
 /*FLST_BASE_NODE_SIZE = 16*/
 #define FSP_FREE_FRAG				(24 + FLST_BASE_NODE_SIZE)		/*space当前空闲的extent列表*/
 #define FSP_FULL_FRAG				(24 + 2 * FLST_BASE_NODE_SIZE)	/*space当前完全占用的extent列表，里面么有空闲页*/
-#define FSP_SEG_ID					(24 + 3 * FLST_BASE_NODE_SIZE)	/*space当前segment ID*/
+#define FSP_SEG_ID					(24 + 3 * FLST_BASE_NODE_SIZE)	/*space中下一个空闲的segment的ID*/
 #define FSP_SEG_INODES_FULL			(32 + 3 * FLST_BASE_NODE_SIZE)	/*space当前完全占满的segment inode*/
 #define FSP_SEG_INODES_FREE			(32 + 4 * FLST_BASE_NODE_SIZE)  /*space当前空闲的segment inode*/
 /*file space header size*/
