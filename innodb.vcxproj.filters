@@ -186,6 +186,9 @@
     <ClInclude Include="fil0fil.h">
       <Filter>fil</Filter>
     </ClInclude>
+    <ClInclude Include="page0types.h">
+      <Filter>include</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">

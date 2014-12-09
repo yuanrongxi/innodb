@@ -105,6 +105,7 @@
     <ClInclude Include="os0file.h" />
     <ClInclude Include="os0sync.h" />
     <ClInclude Include="os0thread.h" />
+    <ClInclude Include="page0types.h" />
     <ClInclude Include="rem0types.h" />
     <ClInclude Include="sync0arr.h" />
     <ClInclude Include="sync0rw.h" />

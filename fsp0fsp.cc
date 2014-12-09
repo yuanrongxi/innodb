@@ -22,19 +22,19 @@ typedef byte	xdes_t;
 #define FSP_HEADER_OFFSET			FIL_PAGE_DATA
 
 #define FSP_NOT_USED				0
-#define FSP_SIZE					8
-#define FSP_FREE_LIMIT				12
-#define FSP_LOWEST_NO_WRITE			16
-#define FSP_FRAG_N_USED				20
-#define FSP_FREE					24
+#define FSP_SIZE					8		/*当前space的page数*/
+#define FSP_FREE_LIMIT				12		/*当前free page最大限制？*/
+#define FSP_LOWEST_NO_WRITE			16		/*好像没有什么用处*/
+#define FSP_FRAG_N_USED				20		/*FSP_FREE_FRAG列表中已经被使用的page数*/
+#define FSP_FREE					24		/*space中可用的extent对象*/
 /*FLST_BASE_NODE_SIZE = 16*/
-#define FSP_FREE_FRAG				(24 + FLST_BASE_NODE_SIZE)
-#define FSP_FULL_FRAG				(24 + 2 * FLST_BASE_NODE_SIZE)
-#define FSP_SEG_ID					(24 + 3 * FLST_BASE_NODE_SIZE)
-#define FSP_SEG_INODES_FULL			(32 + 3 * FLST_BASE_NODE_SIZE)
-#define FSP_SEG_INODES_FREE			(32 + 4 * FLST_BASE_NODE_SIZE)
+#define FSP_FREE_FRAG				(24 + FLST_BASE_NODE_SIZE)		/*space当前空闲的extent列表*/
+#define FSP_FULL_FRAG				(24 + 2 * FLST_BASE_NODE_SIZE)	/*space当前完全占用的extent列表，里面么有空闲页*/
+#define FSP_SEG_ID					(24 + 3 * FLST_BASE_NODE_SIZE)	/*space当前segment ID*/
+#define FSP_SEG_INODES_FULL			(32 + 3 * FLST_BASE_NODE_SIZE)	/*space当前完全占满的segment inode*/
+#define FSP_SEG_INODES_FREE			(32 + 4 * FLST_BASE_NODE_SIZE)  /*space当前空闲的segment inode*/
 /*file space header size*/
-#define FSP_HEADER_SIZE				(32 + 5 * FLST_BASE_NODE_SIZE)
+#define FSP_HEADER_SIZE				(32 + 5 * FLST_BASE_NODE_SIZE)	/*space header的头长度*/
 #define FSP_FREE_ADD				4
 
 /*segment inode*/
@@ -42,34 +42,39 @@ typedef byte	xdes_t;
 /*FLST_NODE_SIZE = 12*/
 #define FSEG_ARR_OFFSET				(FSEG_PAGE_DATA + FLST_NODE_SIZE)
 
-#define FSEG_ID						0 /*8字节*/
-#define FSEG_NOT_FULL_N_USED		8
-#define FSEG_FREE					12
-#define FSEG_NOT_FULL				(12 + FLST_NODE_SIZE)
-#define FSEG_FULL					(12 + 2 * FLST_NODE_SIZE)
-#define FSEG_MAGIC_N				(12 + 3 * FLST_NODE_SIZE)
-#define FSEG_FRAG_ARR				(16 + 3 * FLST_NODE_SIZE)
-#define FSEG_FRAG_ARR_N_SLOTS		(FSP_EXTENT_SIZE / 2)
+#define FSEG_ID						0		/*8字节, segment id*/
+#define FSEG_NOT_FULL_N_USED		8		/*FSEG_NOT_FULL列表中的page数*/
+#define FSEG_FREE					12		/*segment空闲的extent列表*/
+#define FSEG_NOT_FULL				(12 + FLST_BASE_NODE_SIZE) /*没有完全占满的extent的队列*/
+#define FSEG_FULL					(12 + 2 * FLST_BASE_NODE_SIZE) /*完全占满的extent的队列*/
+#define FSEG_MAGIC_N				(12 + 3 * FLST_BASE_NODE_SIZE) /*segment的魔法字，用于校验*/
+
+#define FSEG_FRAG_ARR				(16 + 3 * FLST_BASE_NODE_SIZE) /*segment frag addr偏移量*/
+#define FSEG_FRAG_ARR_N_SLOTS		(FSP_EXTENT_SIZE / 2)	  /*fragment page(应该是extent头页)的slots,slot中存储的是page no*/
 #define FSEG_FRAG_SLOT_SIZE			4
 
+/*segment inode的长度,segment的最后32个page no slot数组*/
 #define FSEG_INODE_SIZE				(16 + 3 * FLST_BASE_NODE_SIZE + FSEG_FRAG_ARR_N_SLOTS * FSEG_FRAG_SLOT_SIZE)
 
+/*单个页可以存放segment inode对象的个数*/
 #define FSP_SEG_INODES_PER_PAGE		((UNIV_PAGE_SIZE - FSEG_ARR_OFFSET - 10) / FSEG_INODE_SIZE)
 
-#define FSEG_MAGIC_N_VALUE			97937874
+/*segment 魔法字的值*/
+#define FSEG_MAGIC_N_VALUE			97937874 
 
-#define	FSEG_FILLFACTOR				8
-#define FSEG_FRAG_LIMIT				FSEG_FRAG_ARR_N_SLOTS
-#define FSEG_FREE_LIST_LIMIT		40
-#define	FSEG_FREE_LIST_MAX_LEN		4
+#define	FSEG_FILLFACTOR				8						/*segment的页分配因子*/
+#define FSEG_FRAG_LIMIT				FSEG_FRAG_ARR_N_SLOTS	/*segment inode中extent头页的数量上限*/
+#define FSEG_FREE_LIST_LIMIT		40						/*segment最大的extent数量*/
+#define	FSEG_FREE_LIST_MAX_LEN		4						
 
 /*区(extent)*/
-#define	XDES_ID						0
-#define XDES_FLST_NODE				8
-#define	XDES_STATE					(FLST_NODE_SIZE + 8)
-#define XDES_BITMAP					(FLST_NODE_SIZE + 12)
+#define	XDES_ID						0		/*extent id,8字节*/
+#define XDES_FLST_NODE				8		/*一个定位extent page的ffil_addr_t对，prev和next*/
+#define	XDES_STATE					(FLST_NODE_SIZE + 8)	/*extent的状态,XDES_FREE、XDES_FREE_FRAG、XDES_FULL_FRAG、XDES_FSEG*/
+#define XDES_BITMAP					(FLST_NODE_SIZE + 12)	/*页状态位图*/
 
 #define XDES_BITS_PER_PAGE			2
+
 #define XDES_FREE_BIT				0
 #define XDES_CLEAN_BIT				1
 
@@ -105,7 +110,7 @@ UNIV_INLINE fsp_header_t* fsp_get_space_header(ulint space_id, mtr_t* mtr)
 	
 	ut_ad(mtr);
 	/*获得space header缓冲区*/
-	header = buf_page_get(id, 0, RW_X_LATCH, mtr) + FSP_HEADER_OFFSET;
+	header = buf_page_get(space_id, 0, RW_X_LATCH, mtr) + FSP_HEADER_OFFSET;
 	buf_page_dbg_add_level(header, SYNC_FSP_PAGE);
 
 	return header;
@@ -462,7 +467,10 @@ ulint fsp_header_get_free_limit(ulint space)
 	mtr_start(&mtr);
 
 	mtr_x_lock(fil_space_get_latch(space), &mtr);
-	header = mtr_read_ulint(header + FSP_FREE_LIMIT, MLOG_4BYTES, &mtr);
+
+	header = fsp_get_space_header(space, &mtr);
+
+	limit = mtr_read_ulint(header + FSP_FREE_LIMIT, MLOG_4BYTES, &mtr);
 
 	limit = limit / ((1024 * 1024) / UNIV_PAGE_SIZE);
 
@@ -593,7 +601,7 @@ static void fsp_fill_free_list(ulint space, fsp_header_t* header, mtr_t* mtr)
 
 		ut_ad(XDES_DESCRIBED_PER_PAGE % FSP_EXTENT_SIZE == 0);
 
-		/*设置page对应bitmap上的状态*/
+		/*设置extent对应的page对应bitmap上的状态*/
 		if(0 == i % XDES_DESCRIBED_PER_PAGE){
 			xdes_set_bit(descr, XDES_FREE_BIT, 0, FALSE, mtr);
 			xdes_set_bit(descr, XDES_FREE_BIT, FSP_IBUF_BITMAP_OFFSET, FALSE, mtr);
@@ -1549,6 +1557,629 @@ void fseg_free_page(fseg_header_t* seg_header, ulint space, ulint page, mtr_t* m
 	buf_page_set_file_page_was_freed(space, page);
 #endif
 }
+
+static void fseg_free_extent(fseg_inode_t* seg_inode, ulint space, ulint page, mtr_t* mtr)
+{
+	ulint	first_page_in_extent;
+	xdes_t*	descr;
+	ulint	not_full_n_used;
+	ulint	descr_n_used;
+	ulint	i;
+
+	ut_ad(seg_inode && mtr);
+
+	descr = xdes_get_descriptor(space, page, mtr);
+
+	ut_a(xdes_get_state(descr, mtr) == XDES_FSEG);
+	ut_a(0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, mtr), mtr_read_dulint(seg_inode + FSEG_ID, MLOG_8BYTES, mtr)));
+
+	first_page_in_extent = page - (page % FSP_EXTENT_SIZE);
+	for(i = 0; i < FSP_EXTENT_SIZE; i ++){
+		if (FALSE == xdes_get_bit(descr, XDES_FREE_BIT, i, mtr)) /*删除内存中的hash index*/
+			btr_search_drop_page_hash_when_freed(space, first_page_in_extent + i);
+	}
+
+	if(xdes_is_full(descr, mtr))/*将extent对象从inode full list中删除*/
+		flst_remove(seg_inode + FSEG_FULL, descr + XDES_FLST_NODE, mtr); 
+	else if(xdes_is_free(descr, mtr))/*将extent对象从inode free list中删除*/
+		flst_remove(seg_inode + FSEG_FREE, descr + XDES_FLST_NODE);
+	else{
+		flst_remove(seg_inode + FSEG_NOT_FULL, descr + XDES_FLST_NODE, mtr);
+		not_full_n_used = mtr_read_ulint(seg_inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr);
+		descr_n_used = xdes_get_n_used(descr, mtr);
+
+		ut_a(not_full_n_used >= descr_n_used);
+		/*更改inode已用的page数量*/
+		mlog_write_ulint(seg_inode + FSEG_NOT_FULL_N_USED, not_full_n_used - descr_n_used, MLOG_4BYTES, mtr);
+	}
+
+	/*释放extent*/
+	fsp_free_extent(space, page, mtr);
+
+#ifdef UNIV_DEBUG_FILE_ACCESSES
+	for (i = 0; i < FSP_EXTENT_SIZE; i++) {
+		buf_page_set_file_page_was_freed(space, first_page_in_extent + i);
+	}
+#endif
+}
+
+/*逐步释放segment*/
+ibool fseg_free_step(fseg_header_t* header, mtr_t* mtr)
+{
+	ulint		n;
+	ulint		page;
+	xdes_t*		descr;
+	fseg_inode_t*	inode;
+	ulint		space;
+
+	space = buf_frame_get_space_id(header);
+
+	ut_ad(!mutex_own(&kernel_mutex) || mtr_memo_contains(mtr, fil_space_get_latch(space), MTR_MEMO_X_LOCK));
+	mtr_x_lock(fil_space_get_latch(space), mtr);
+
+	descr = xdes_get_descriptor(space, buf_frame_get_page_no(header), mtr);
+
+	ut_a(descr);
+	ut_a(xdes_get_bit(descr, XDES_FREE_BIT, buf_frame_get_page_no(header) % FSP_EXTENT_SIZE, mtr) == FALSE);
+
+	inode = fseg_inode_get(header, mtr);
+	descr = fseg_get_first_extent(inode, mtr); /*获得inode中第一个extent*/
+	if(descr != NULL){
+		page = xdes_get_offset(descr);
+		fseg_free_extent(inode, space, page, mtr);
+
+		return FALSE;
+	}
+
+	n = fseg_find_last_used_frag_page_slot(inode, mtr);
+	if(n == ULINT_UNDEFINED){ /*已经从slot中删除了，可以直接释放inode*/
+		fsp_free_seg_inode(space, inode, mtr);
+		return TRUE;
+	}
+
+	/*释放对应的inode页*/
+	fseg_free_page_low(inode, space, fseg_get_nth_frag_page_no(inode, n, mtr), mtr);
+
+	n = fseg_find_last_used_frag_page_slot(inode, mtr);
+	if(n == ULINT_UNDEFINED){
+		fsp_free_seg_inode(space, inode, mtr);
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+/*释放segment，但不释放头页*/
+ibool fseg_free_step_not_header(fseg_header_t* header, mtr_t* mtr)
+{
+	ulint		n;
+	ulint		page;
+	xdes_t*		descr;
+	fseg_inode_t*	inode;
+	ulint		space;
+	ulint		page_no;
+
+	space = buf_frame_get_space_id(header);
+	ut_ad(!mutex_own(&kernel_mutex) || mtr_memo_contains(mtr, fil_space_get_latch(space), MTR_MEMO_X_LOCK));
+
+	mtr_x_lock(fil_space_get_latch(space), mtr);
+	/*获得inode和第一个extent*/
+	inode = fseg_inode_get(header, mtr);
+
+	descr = fseg_get_first_extent(inode, mtr);
+	if(descr != NULL){ /*还有extent,对extent进行释放*/
+		page = xdes_get_offset(descr);
+		fseg_free_extent(inode, space, page, mtr);
+		return FALSE;
+	}
+
+	n = fseg_find_last_used_frag_page_slot(inode, mtr);
+	if(n == ULINT_UNDEFINED)
+		ut_error;
+
+	page_no = fseg_get_nth_frag_page_no(inode, n, mtr);
+	if(page_no == buf_frame_get_page_no(header)) /*已经是头页，表示segment已经清空了*/
+		return TRUE;
+
+	/*释放掉对应的页占用*/
+	fseg_free_page_low(inode, space, page_no, mtr);
+
+	return FALSE;
+}
+
+void fseg_free(ulint space, ulint page_no, ulint offset)
+{
+	mtr_t			mtr;
+	ibool			finished;
+	fseg_header_t*	header;
+	fil_addr_t		addr;
+
+	addr.page = page_no;
+	addr.boffset = offset;
+
+	for(;;){
+		mtr_start(&mtr);
+		/*逐步对segment进行释放*/
+		header = fut_get_ptr(space, addr, RW_X_LATCH, &mtr);
+		finished = fseg_free_step(header, &mtr);
+		mtr_commit(&mtr);
+	}
+
+	if(finished)
+		return ;
+}
+
+static xdes_t* fseg_get_first_extent(fseg_inode_t* inode, mtr_t* mtr)
+{
+	fil_addr_t	first;
+	ulint		space;
+	xdes_t*		descr;
+
+	ut_ad(inode && mtr);
+	space = buf_frame_get_space_id(inode);
+
+	first = fil_addr_null;
+
+	if(flst_get_len(inode + FSEG_FULL, mtr) > 0)
+		first = flst_get_first(inode + FSEG_FULL, mtr);
+	else if(flst_get_len(inode + FSEG_NOT_FULL, mtr) > 0)
+		first = flst_get_first(inode + FSEG_NOT_FULL, mtr);
+	else if(flst_get_len(inode + FSEG_FREE, mtr) > 0)
+		first = flst_get_first(inode + FSEG_FREE, mtr);
+
+	if(first.page == FIL_NULL)
+		return NULL;
+
+	return xdes_lst_get_descriptor(space, first, mtr);
+}
+
+
+static ibool fseg_validate_low(fseg_inode_t* inode, mtr_t*	mtr2)	
+{
+	ulint		space;
+	dulint		seg_id;
+	mtr_t		mtr;
+	xdes_t*		descr;
+	fil_addr_t	node_addr;
+	ulint		n_used		= 0;
+	ulint		n_used2		= 0;
+
+	ut_ad(mtr_memo_contains(mtr2, buf_block_align(inode), MTR_MEMO_PAGE_X_FIX));
+	ut_ad(mach_read_from_4(inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
+
+	space = buf_frame_get_space_id(inode);
+
+	seg_id = mtr_read_dulint(inode + FSEG_ID, MLOG_8BYTES, mtr2); 
+	n_used = mtr_read_ulint(inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr2); 
+
+	flst_validate(inode + FSEG_FREE, mtr2);
+	flst_validate(inode + FSEG_NOT_FULL, mtr2);
+	flst_validate(inode + FSEG_FULL, mtr2);
+
+	/* Validate FSEG_FREE list */
+	node_addr = flst_get_first(inode + FSEG_FREE, mtr2);
+	while (!fil_addr_is_null(node_addr)) {
+		mtr_start(&mtr);
+		mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+		descr = xdes_lst_get_descriptor(space, node_addr, &mtr);
+
+		ut_a(xdes_get_n_used(descr, &mtr) == 0);
+		ut_a(xdes_get_state(descr, &mtr) == XDES_FSEG);
+		ut_a(0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, &mtr), seg_id));
+
+		node_addr = flst_get_next_addr(descr + XDES_FLST_NODE, &mtr);
+		mtr_commit(&mtr);
+	}
+
+	/* Validate FSEG_NOT_FULL list */
+	node_addr = flst_get_first(inode + FSEG_NOT_FULL, mtr2);
+	while (!fil_addr_is_null(node_addr)){
+		mtr_start(&mtr);
+		mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+		descr = xdes_lst_get_descriptor(space, node_addr, &mtr);
+
+		ut_a(xdes_get_n_used(descr, &mtr) > 0);
+		ut_a(xdes_get_n_used(descr, &mtr) < FSP_EXTENT_SIZE);
+		ut_a(xdes_get_state(descr, &mtr) == XDES_FSEG);
+		ut_a(0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, &mtr), seg_id));
+
+		n_used2 += xdes_get_n_used(descr, &mtr);
+
+		node_addr = flst_get_next_addr(descr + XDES_FLST_NODE, &mtr);
+
+		mtr_commit(&mtr);
+	}
+
+	/* Validate FSEG_FULL list */
+	node_addr = flst_get_first(inode + FSEG_FULL, mtr2);
+	while (!fil_addr_is_null(node_addr)) {
+		mtr_start(&mtr);
+		mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+		descr = xdes_lst_get_descriptor(space, node_addr, &mtr);
+
+		ut_a(xdes_get_n_used(descr, &mtr) == FSP_EXTENT_SIZE);
+		ut_a(xdes_get_state(descr, &mtr) == XDES_FSEG);
+		ut_a(0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, &mtr), seg_id));
+
+		node_addr = flst_get_next_addr(descr + XDES_FLST_NODE, &mtr);
+		mtr_commit(&mtr);
+	}
+
+	ut_a(n_used == n_used2);
+
+	return(TRUE);
+}
+
+ibool fseg_validate(fseg_header_t* header, mtr_t* mtr2)
+{
+	fseg_inode_t* inode;
+	ibool ret;
+	
+	space = buf_frame_get_space_id(header);
+
+	mtr_x_lock(fil_space_get_latch(space), mtr2);
+	inode = fseg_inode_get(header, mtr2);
+	ret = fseg_validate_low(inode, mtr2);
+
+	return ret;
+}
+
+static void fseg_print_low(fseg_inode_t* inode, mtr_t* mtr)
+{
+	ulint	space;
+	ulint	seg_id_low;
+	ulint	seg_id_high;
+	ulint	n_used;
+	ulint	n_frag;
+	ulint	n_free;
+	ulint	n_not_full;
+	ulint	n_full;
+	ulint	reserved;
+	ulint	used;
+	ulint	page_no;
+	dulint   d_var;
+
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(inode), MTR_MEMO_PAGE_X_FIX));
+
+	space = buf_frame_get_space_id(inode);
+	page_no = buf_frame_get_page_no(inode);
+
+	reserved = fseg_n_reserved_pages_low(inode, &used, mtr);
+	d_var = mtr_read_dulint(inode + FSEG_ID, MLOG_8BYTES, mtr);
+	
+	seg_id_low = ut_dulint_get_low(d_var);
+	seg_id_high = ut_dulint_get_high(d_var);
+
+	n_used = mtr_read_ulint(inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr); 
+
+	n_frag = fseg_get_n_frag_pages(inode, mtr);
+	n_free = flst_get_len(inode + FSEG_FREE, mtr);
+	n_not_full = flst_get_len(inode + FSEG_NOT_FULL, mtr);
+	n_full = flst_get_len(inode + FSEG_FULL, mtr);
+
+	printf("SEGMENT id %lu %lu space %lu; page %lu; res %lu used %lu; full ext %lu\n",
+		seg_id_high, seg_id_low, space, page_no, reserved, used, n_full);
+
+	printf("fragm pages %lu; free extents %lu; not full extents %lu: pages %lu\n",
+		n_frag, n_free, n_not_full, n_used);
+}
+
+ibool fsp_validate(ulint space)
+{
+	fsp_header_t*	header;
+	fseg_inode_t*	seg_inode;
+	page_t*		seg_inode_page;
+	ulint		size;
+	ulint		free_limit;
+	ulint		frag_n_used;
+	mtr_t		mtr;
+	mtr_t		mtr2;
+	xdes_t*		descr;
+	fil_addr_t	node_addr;
+	fil_addr_t	next_node_addr;
+	ulint		descr_count	= 0;
+	ulint		n_used		= 0;
+	ulint		n_used2		= 0;
+	ulint		n_full_frag_pages;
+	ulint		n;
+	ulint		seg_inode_len_free;
+	ulint		seg_inode_len_full;
+
+	mtr_start(&mtr2);
+	mtr_x_lock(fil_space_get_latch(space), &mtr2);	
+
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+	header = fsp_get_space_header(space, &mtr);
+
+	size = mtr_read_ulint(header + FSP_SIZE, MLOG_4BYTES, &mtr); 
+	free_limit = mtr_read_ulint(header + FSP_FREE_LIMIT, MLOG_4BYTES, &mtr); 
+	frag_n_used = mtr_read_ulint(header + FSP_FRAG_N_USED, MLOG_4BYTES, &mtr); 
+
+	n_full_frag_pages = FSP_EXTENT_SIZE * flst_get_len(header + FSP_FULL_FRAG, &mtr);
+
+	ut_a(free_limit <= size);
+
+	flst_validate(header + FSP_FREE, &mtr);
+	flst_validate(header + FSP_FREE_FRAG, &mtr);
+	flst_validate(header + FSP_FULL_FRAG, &mtr);
+
+	mtr_commit(&mtr);
+
+	/* Validate FSP_FREE list */
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+	header = fsp_get_space_header(space, &mtr);
+	node_addr = flst_get_first(header + FSP_FREE, &mtr);
+
+	mtr_commit(&mtr);
+
+	while (!fil_addr_is_null(node_addr)) {
+		mtr_start(&mtr);
+		mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+		descr_count++;
+		descr = xdes_lst_get_descriptor(space, node_addr, &mtr);
+
+		ut_a(xdes_get_n_used(descr, &mtr) == 0);
+		ut_a(xdes_get_state(descr, &mtr) == XDES_FREE);
+
+		node_addr = flst_get_next_addr(descr + XDES_FLST_NODE, &mtr);
+		mtr_commit(&mtr);
+	}
+
+	/* Validate FSP_FREE_FRAG list */
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+	header = fsp_get_space_header(space, &mtr);
+	node_addr = flst_get_first(header + FSP_FREE_FRAG, &mtr);
+
+	mtr_commit(&mtr);
+
+	while (!fil_addr_is_null(node_addr)) {
+		mtr_start(&mtr);
+		mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+		descr_count++;
+		descr = xdes_lst_get_descriptor(space, node_addr, &mtr);
+
+		ut_a(xdes_get_n_used(descr, &mtr) > 0);
+		ut_a(xdes_get_n_used(descr, &mtr) < FSP_EXTENT_SIZE);
+		ut_a(xdes_get_state(descr, &mtr) == XDES_FREE_FRAG);
+
+		n_used += xdes_get_n_used(descr, &mtr);
+		node_addr = flst_get_next_addr(descr + XDES_FLST_NODE, &mtr);
+
+		mtr_commit(&mtr);
+	}
+
+	/* Validate FSP_FULL_FRAG list */
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+	header = fsp_get_space_header(space, &mtr);
+	node_addr = flst_get_first(header + FSP_FULL_FRAG, &mtr);
+
+	mtr_commit(&mtr);
+
+	while (!fil_addr_is_null(node_addr)) {
+		mtr_start(&mtr);
+		mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+		descr_count++;
+		descr = xdes_lst_get_descriptor(space, node_addr, &mtr);
+
+		ut_a(xdes_get_n_used(descr, &mtr) == FSP_EXTENT_SIZE);
+		ut_a(xdes_get_state(descr, &mtr) == XDES_FULL_FRAG);
+
+		node_addr = flst_get_next_addr(descr + XDES_FLST_NODE, &mtr);
+		mtr_commit(&mtr);
+	}
+
+	/* Validate segments */
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+	header = fsp_get_space_header(space, &mtr);
+
+	node_addr = flst_get_first(header + FSP_SEG_INODES_FULL, &mtr);	
+
+	seg_inode_len_full = flst_get_len(header + FSP_SEG_INODES_FULL, &mtr);
+
+	mtr_commit(&mtr);
+
+	while (!fil_addr_is_null(node_addr)) {
+
+		for (n = 0; n < FSP_SEG_INODES_PER_PAGE; n++) {	
+			mtr_start(&mtr);
+			mtr_x_lock(fil_space_get_latch(space), &mtr);
+
+			seg_inode_page = fut_get_ptr(space, node_addr, RW_X_LATCH, &mtr) - FSEG_INODE_PAGE_NODE;
+
+			seg_inode = fsp_seg_inode_page_get_nth_inode(seg_inode_page, n, &mtr);
+			ut_a(ut_dulint_cmp(mach_read_from_8(seg_inode + FSEG_ID), ut_dulint_zero) != 0);
+			fseg_validate_low(seg_inode, &mtr);
+
+			descr_count += flst_get_len(seg_inode + FSEG_FREE, &mtr);
+			descr_count += flst_get_len(seg_inode + FSEG_FULL, &mtr);
+			descr_count += flst_get_len(seg_inode + FSEG_NOT_FULL, &mtr);
+
+			n_used2 += fseg_get_n_frag_pages(seg_inode, &mtr);
+
+			next_node_addr = flst_get_next_addr(seg_inode_page + FSEG_INODE_PAGE_NODE, &mtr);
+			mtr_commit(&mtr);
+		}
+
+		node_addr = next_node_addr;
+	}
+
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+	header = fsp_get_space_header(space, &mtr);
+
+	node_addr = flst_get_first(header + FSP_SEG_INODES_FREE, &mtr);
+
+	seg_inode_len_free = flst_get_len(header + FSP_SEG_INODES_FREE, &mtr);
+
+	mtr_commit(&mtr);
+
+	while (!fil_addr_is_null(node_addr)) {
+
+		for (n = 0; n < FSP_SEG_INODES_PER_PAGE; n++) {	
+
+			mtr_start(&mtr);
+			mtr_x_lock(fil_space_get_latch(space), &mtr);
+
+			seg_inode_page = fut_get_ptr(space, node_addr, RW_X_LATCH, &mtr) - FSEG_INODE_PAGE_NODE;
+
+			seg_inode = fsp_seg_inode_page_get_nth_inode(seg_inode_page, n, &mtr);
+			if (ut_dulint_cmp(mach_read_from_8(seg_inode + FSEG_ID), ut_dulint_zero) != 0) {
+					fseg_validate_low(seg_inode, &mtr);
+
+					descr_count += flst_get_len(seg_inode + FSEG_FREE, &mtr);
+					descr_count += flst_get_len(seg_inode + FSEG_FULL, &mtr);
+					descr_count += flst_get_len(seg_inode + FSEG_NOT_FULL, &mtr);
+					n_used2 += fseg_get_n_frag_pages(seg_inode, &mtr);
+			}
+
+			next_node_addr = flst_get_next_addr(seg_inode_page + FSEG_INODE_PAGE_NODE, &mtr);
+			mtr_commit(&mtr);
+		}
+
+		node_addr = next_node_addr;
+	}
+
+	ut_a(descr_count * FSP_EXTENT_SIZE == free_limit);
+	ut_a(n_used + n_full_frag_pages == n_used2 + 2* ((free_limit + XDES_DESCRIBED_PER_PAGE - 1) / XDES_DESCRIBED_PER_PAGE) + seg_inode_len_full + seg_inode_len_free);
+	ut_a(frag_n_used == n_used);
+
+	mtr_commit(&mtr2);
+	return(TRUE);
+}
+
+void fsp_print(ulint space)
+{
+	fsp_header_t*	header;
+	fseg_inode_t*	seg_inode;
+	page_t*		seg_inode_page;
+	ulint		size;
+	ulint		free_limit;
+	ulint		frag_n_used;
+	fil_addr_t	node_addr;
+	fil_addr_t	next_node_addr;
+	ulint		n_free;
+	ulint		n_free_frag;
+	ulint		n_full_frag;
+	ulint		seg_id_low;
+	ulint		seg_id_high;
+	ulint		n;
+	ulint		n_segs	= 0;
+	dulint      d_var;
+	mtr_t		mtr;
+	mtr_t		mtr2;
+
+	mtr_start(&mtr2);
+	mtr_x_lock(fil_space_get_latch(space), &mtr2);	
+
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+	header = fsp_get_space_header(space, &mtr);
+	size = mtr_read_ulint(header + FSP_SIZE, MLOG_4BYTES, &mtr);
+
+	free_limit = mtr_read_ulint(header + FSP_FREE_LIMIT, MLOG_4BYTES, &mtr);
+	frag_n_used = mtr_read_ulint(header + FSP_FRAG_N_USED, MLOG_4BYTES, &mtr);
+
+	n_free = flst_get_len(header + FSP_FREE, &mtr);
+	n_free_frag = flst_get_len(header + FSP_FREE_FRAG, &mtr);
+	n_full_frag = flst_get_len(header + FSP_FULL_FRAG, &mtr);
+
+	d_var = mtr_read_dulint(header + FSP_SEG_ID, MLOG_8BYTES, &mtr);
+
+	seg_id_low = ut_dulint_get_low(d_var);
+	seg_id_high = ut_dulint_get_high(d_var);
+
+	printf("FILE SPACE INFO: id %lu\n", space);
+	printf("size %lu, free limit %lu, free extents %lu\n", size, free_limit, n_free);
+
+	printf("not full frag extents %lu: used pages %lu, full frag extents %lu\n", n_free_frag, frag_n_used, n_full_frag);
+	printf("first seg id not used %lu %lu\n", seg_id_high, seg_id_low);
+
+	mtr_commit(&mtr);
+
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);
+
+	header = fsp_get_space_header(space, &mtr);
+	node_addr = flst_get_first(header + FSP_SEG_INODES_FULL, &mtr);
+
+	mtr_commit(&mtr);
+
+	while(!fil_addr_is_null(node_addr)){
+		for (n = 0; n < FSP_SEG_INODES_PER_PAGE; n++) {	
+			mtr_start(&mtr);
+			mtr_x_lock(fil_space_get_latch(space), &mtr);
+
+			seg_inode_page = fut_get_ptr(space, node_addr, RW_X_LATCH, &mtr) - FSEG_INODE_PAGE_NODE;
+
+			seg_inode = fsp_seg_inode_page_get_nth_inode(seg_inode_page, n, &mtr);
+			ut_a(ut_dulint_cmp(mach_read_from_8(seg_inode + FSEG_ID), ut_dulint_zero) != 0);
+			fseg_print_low(seg_inode, &mtr);
+
+			n_segs++;
+
+			next_node_addr = flst_get_next_addr(seg_inode_page + FSEG_INODE_PAGE_NODE, &mtr);
+			mtr_commit(&mtr);
+		}
+
+		node_addr = next_node_addr;
+	}
+
+	mtr_start(&mtr);
+	mtr_x_lock(fil_space_get_latch(space), &mtr);	
+
+	header = fsp_get_space_header(space, &mtr);
+
+	node_addr = flst_get_first(header + FSP_SEG_INODES_FREE, &mtr);
+
+	mtr_commit(&mtr);
+
+	while (!fil_addr_is_null(node_addr)) {
+		for (n = 0; n < FSP_SEG_INODES_PER_PAGE; n++) {	
+
+			mtr_start(&mtr);
+			mtr_x_lock(fil_space_get_latch(space), &mtr);
+
+			seg_inode_page = fut_get_ptr(space, node_addr, RW_X_LATCH, &mtr) - FSEG_INODE_PAGE_NODE;
+
+			seg_inode = fsp_seg_inode_page_get_nth_inode(seg_inode_page, n, &mtr);
+			if (ut_dulint_cmp(mach_read_from_8(seg_inode + FSEG_ID), ut_dulint_zero) != 0) {
+					fseg_print_low(seg_inode, &mtr);
+					n_segs++;
+			}
+
+			next_node_addr = flst_get_next_addr(seg_inode_page + FSEG_INODE_PAGE_NODE, &mtr);
+			mtr_commit(&mtr);
+		}
+
+		node_addr = next_node_addr;
+	}
+
+	mtr_commit(&mtr2);
+
+	printf("NUMBER of file segments: %lu\n", n_segs);	
+}
+
+
+
+
 
 
 
