@@ -22,17 +22,17 @@ typedef byte	xdes_t;
 #define FSP_HEADER_OFFSET			FIL_PAGE_DATA
 
 #define FSP_NOT_USED				0
-#define FSP_SIZE					8		/*当前space的page数*/
-#define FSP_FREE_LIMIT				12		/*当前free page最大限制？*/
+#define FSP_SIZE					8		/*当前space最大可容纳的page数,文件扩大时才会改变这个值*/
+#define FSP_FREE_LIMIT				12		/*当前space已经分配初始化的page数*/
 #define FSP_LOWEST_NO_WRITE			16		/*好像没有什么用处*/
 #define FSP_FRAG_N_USED				20		/*FSP_FREE_FRAG列表中已经被使用的page数*/
-#define FSP_FREE					24		/*space中可用的extent对象*/
+#define FSP_FREE					24		/*space中可用的extent对象列表*/
 /*FLST_BASE_NODE_SIZE = 16*/
 #define FSP_FREE_FRAG				(24 + FLST_BASE_NODE_SIZE)		/*space当前空闲的extent列表*/
 #define FSP_FULL_FRAG				(24 + 2 * FLST_BASE_NODE_SIZE)	/*space当前完全占用的extent列表，里面么有空闲页*/
 #define FSP_SEG_ID					(24 + 3 * FLST_BASE_NODE_SIZE)	/*space中下一个空闲的segment的ID*/
-#define FSP_SEG_INODES_FULL			(32 + 3 * FLST_BASE_NODE_SIZE)	/*space当前完全占满的segment inode*/
-#define FSP_SEG_INODES_FREE			(32 + 4 * FLST_BASE_NODE_SIZE)  /*space当前空闲的segment inode*/
+#define FSP_SEG_INODES_FULL			(32 + 3 * FLST_BASE_NODE_SIZE)	/*space当前完全占满的segment inodes pages*/
+#define FSP_SEG_INODES_FREE			(32 + 4 * FLST_BASE_NODE_SIZE)  /*space当前空闲的segment inode pages*/
 /*file space header size*/
 #define FSP_HEADER_SIZE				(32 + 5 * FLST_BASE_NODE_SIZE)	/*space header的头长度*/
 #define FSP_FREE_ADD				4
@@ -91,11 +91,11 @@ typedef byte	xdes_t;
 static void		fsp_free_extent(ulint space, ulint page, mtr_t* mtr);
 /*释放segment中的一个extent到space free list中*/
 static void		fseg_free_extent(fseg_inode_t* seg_inode, ulint space, ulint page, mtr_t* mtr);
-
+/*计算fseg_inode当中所有的page数和已经使用的page数量*/
 static ulint	fseg_n_reserved_pages_low(fseg_inode_t* header, ulint* used, mtr_t* mtr);
-
+/*标记一个page已经被占用了*/
 static void		fseg_mark_page_used(fseg_inode_t* seg_inde, ulint space, ulint page, mtr_t* mtr);
-
+/*获得fseg node中第一个extent*/
 static xdes_t*	fseg_get_first_extent(fseg_inode_t* inode, mtr_t* mtr);
 
 static void		fsp_fill_free_list(ulint space, fsp_header_t* header, mtr_t* mtr);
@@ -128,6 +128,7 @@ UNIV_INLINE ibool xdes_get_bit(xdes_t* descr, ulint bit, ulint offset, mtr_t* mt
 	ut_ad((bit == XDES_FREE_BIT) || (bit == XDES_CLEAN_BIT));
 	ut_ad(offset < FSP_EXTENT_SIZE);
 
+	/*每个页占2个bit，第一个bit表示free状态，第二个bit表示clean状态*/
 	index = bit + XDES_BITS_PER_PAGE * offset;
 	byte_index = index / 8;
 	bit_index = index % 8;
@@ -203,7 +204,7 @@ UNIV_INLINE ulint xdes_find_bit_downward(xdes_t* descr, ulint bit, ibool val, ul
 	return ULINT_UNDEFINED;
 }
 
-/*返回已经区中已使用的page数量*/
+/*返回已经xdes descr中已使用的page数量，通过free位来判断*/
 UNIV_INLINE ulint xdes_get_n_used(xdes_t* descr, mtr_t* mtr)
 {
 	ulint i;
@@ -213,7 +214,7 @@ UNIV_INLINE ulint xdes_get_n_used(xdes_t* descr, mtr_t* mtr)
 	ut_ad(mtr_memo_contains(mtr, buf_block_align(descr), MTR_MEMO_PAGE_X_FIX));
 
 	for(i = 0; i < FSP_EXTENT_SIZE; i ++){
-		if(xdes_get_bit(descr, XDES_FREE_BIT, i, mtr) == FALSE)
+		if(xdes_get_bit(descr, XDES_FREE_BIT, i, mtr) == FALSE) /*FASLSE表示被占用了*/
 			count ++;
 	}
 
@@ -238,6 +239,7 @@ UNIV_INLINE ibool xdes_is_full(xdes_t* descr, mtr_t* mtr)
 		return FALSE;
 }
 
+/*设置extent的状态*/
 UNIV_INLINE void xdes_set_state(xdes_t* descr, ulint state, mtr_t* mtr)
 {
 	ut_ad(descr && mtr);
@@ -264,16 +266,16 @@ UNIV_INLINE void xdes_init(xdes_t* descr, mtr_t* mtr)
 	ut_ad(mtr_memo_contains(mtr, buf_block_align(descr), MTR_MEMO_PAGE_X_FIX));
 	ut_ad((XDES_SIZE - XDES_BITMAP) % 4 == 0);
 
-	/*初始化bitmap*/
+	/*初始化bitmap,全部page bit为1*/
 	for(i = XDES_BITMAP, i < XDES_SIZE; i += 4){
 		mlog_write_ulint(descr + i, 0xFFFFFFFF, MLOG_4BYTES, mtr);
 	}
 
-	/*设置区状态*/
+	/*设置extent free状态*/
 	xdes_set_state(descr, XDES_FREE, mtr);
 }
 
-/*offset案page size对齐*/
+/*offset按page size对齐*/
 UNIV_INLINE ulint xdes_calc_descriptor_page(ulint offset)
 {
 	ut_ad(UNIV_PAGE_SIZE > XDES_ARR_OFFSET + (XDES_DESCRIBED_PER_PAGE / FSP_EXTENT_SIZE) * XDES_SIZE);
@@ -281,7 +283,7 @@ UNIV_INLINE ulint xdes_calc_descriptor_page(ulint offset)
 	return ut_2pow_round(offset, XDES_DESCRIBED_PER_PAGE);
 }
 
-/*计算offset对应的page 描述索引*/
+/*计算offset对应page 的extent描述索引*/
 UNIV_INLINE ulint xdes_calc_descriptor_index(ulint offset)
 {
 	ut_2pow_remainder(offset, XDES_DESCRIBED_PER_PAGE) / FSP_EXTENT_SIZE;
@@ -307,7 +309,7 @@ UNIV_INLINE xdes_t* xdes_get_descriptor_with_space_hdr(fsp_header_t* sp_header, 
 	if(offset == limit)
 		fsp_fill_free_list(space, sp_header, mtr);
 	
-	/*计算对应的page no*/
+	/*计算对应的xdesc page no*/
 	descr_page_no = xdes_calc_descriptor_page(offset);
 
 	if(descr_page_no == 0)
@@ -316,11 +318,11 @@ UNIV_INLINE xdes_t* xdes_get_descriptor_with_space_hdr(fsp_header_t* sp_header, 
 		descr_page = buf_page_get(space, descr_page_no, RW_X_LATCH, mtr); /*获得descr_page_no对应的指针地址*/
 		buf_page_dbg_add_level(descr_page, SYNC_FSP_PAGE);
 	}
-
+	/*返回offset对应的xdes descr的指针地址*/
 	return (descr_page + XDES_ARR_OFFSET + XDES_SIZE * xdes_calc_descriptor_index(offset));
 }
 
-/*通过offset获取space对应的区描述指针*/
+/*通过offset获取space对应的extent描述指针*/
 static xdes_t* xdes_get_descriptor(ulint space, ulint offset, mtr_t* mtr)
 {
 	fsp_header_t* sp_header;
@@ -343,6 +345,7 @@ UNIV_INLINE xdes_t* xdes_lst_get_descriptor(ulint space, fil_addr_t lst_node, mt
 	return descr;
 }
 
+/*获得descr对应链表中的下一个xdes entry*/
 UNIV_INLINE xdes_t* xdes_ls_get_next(xdes_t* descr, mtr_t* mtr)
 {
 	ulint	space;
@@ -354,7 +357,7 @@ UNIV_INLINE xdes_t* xdes_ls_get_next(xdes_t* descr, mtr_t* mtr)
 	return xdes_lst_get_descriptor(space, flst_get_next_addr(descr + XDES_FLST_NODE, mtr), mtr);
 }
 
-/*返回descr所在extent第一个页的偏移量*/
+/*descr对应物理地址的偏移量，与xdes_get_descriptor函数正好相反，*/
 UNIV_INLINE ulint xdes_get_offset(xdes_t* descr)
 {
 	ut_ad(descr);
@@ -703,7 +706,7 @@ static ulint fsp_alloc_free_page(ulint space, ulint hint, mtr_t* mtr)
 	mlog_write_ulint(header + FSP_FRAG_N_USED, frag_n_used, MLOG_4BYTES, mtr);
 	if(xdes_is_full(descr, mtr)){/*区被占满了*/
 		flst_remove(header + FSP_FREE_FRAG, descr + XDES_FLST_NODE, mtr);
-		xdes_set_state(header + FSP_FULL_FRAG, descr + XDES_FLST_NODE, mtr);
+		xdes_set_state(descr, XDES_FULL_FRAG, mtr);
 
 		flst_add_last(header + FSP_FULL_FRAG, descr + XDES_FLST_NODE, mtr);
 
@@ -1260,7 +1263,7 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 		ret_descr = xdes_lst_get_descriptor(space, first, mtr);
 		ret_page = xdes_get_offset(ret_descr) + xdes_find_bit(ret_descr, XDES_FREE_BIT, TRUE, 0, mtr);
 	}
-	else if(used < FSEG_FRAG_LIMIT){ /*inode没有空闲的页，但是fseg中还可以使用更多的页*/
+	else if(used < FSEG_FRAG_LIMIT){ /*inode没有空闲的页，但是fseg中还可以使用更多的页,分配一个碎片页？*/
 		/*分配一个新的页，并将其插入到seg inode当中*/
 		ret_page = fsp_alloc_free_page(space, hint, mtr);
 		ret_descr = NULL;
