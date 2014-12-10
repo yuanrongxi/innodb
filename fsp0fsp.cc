@@ -364,7 +364,7 @@ UNIV_INLINE ulint xdes_get_offset(xdes_t* descr)
 	return buf_frame_get_page_no(descr) + ((descr - buf_frame_align(descr) - XDES_ARR_OFFSET) / XDES_SIZE) * FSP_EXTENT_SIZE;
 }
 
-/*初始化一个page页*/
+/*初始化一个page fil header和page file trailer*/
 static void fsp_init_file_page_low(byte* ptr)
 {
 	page_t* page;
@@ -410,7 +410,7 @@ void fsp_header_init(ulint space, ulint size, mtr_t* mtr)
 	/*获得space mtr的x-latch控制权*/
 	mtr_x_lock(fil_space_get_latch(space), mtr);
 
-	/*创建一个初始化页*/
+	/*创建一个初始化页 page 0*/
 	page = buf_page_create(space, 0, mtr);
 	buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
 
@@ -474,7 +474,6 @@ ulint fsp_header_get_free_limit(ulint space)
 	header = fsp_get_space_header(space, &mtr);
 
 	limit = mtr_read_ulint(header + FSP_FREE_LIMIT, MLOG_4BYTES, &mtr);
-
 	limit = limit / ((1024 * 1024) / UNIV_PAGE_SIZE);
 
 	/*设置log的checkpoint limit*/
@@ -485,7 +484,7 @@ ulint fsp_header_get_free_limit(ulint space)
 	return limit;
 }
 
-/*获得表空间的size*/
+/*获得表空间的size，就是表空间可分配的page数*/
 ulint fsp_header_get_tablespace_size(ulint space)
 {
 	fsp_header_t*	header;
@@ -576,7 +575,7 @@ static void fsp_fill_free_list(ulint space, fsp_header_t* header, mtr_t* mtr)
 
 		log_fsp_current_free_limit_set_and_checkpoint((i + FSP_EXTENT_SIZE)/ ((1024 * 1024) / UNIV_PAGE_SIZE));
 		if(0 == i % XDES_DESCRIBED_PER_PAGE){ /*初始化一个描述page*/
-			if(i > 0){
+			if(i > 0){/*创建一个xdesc页*/
 				descr_page = buf_page_create(space, i, mtr);
 				buf_page_dbg_add_level(descr_page,SYNC_FSP_PAGE);
 				buf_page_get(space, i, RW_X_LATCH, mtr);
