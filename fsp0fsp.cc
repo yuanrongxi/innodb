@@ -1712,6 +1712,7 @@ void fseg_free(ulint space, ulint page_no, ulint offset)
 	addr.page = page_no;
 	addr.boffset = offset;
 
+	/*释放一个inode页*/
 	for(;;){
 		mtr_start(&mtr);
 		/*逐步对segment进行释放*/
