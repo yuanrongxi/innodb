@@ -100,7 +100,7 @@ void					mtr_rollback_to_savepoint(mtr_t* mtr, ulint savepoint);
 
 ulint					mtr_read_ulint(byte* ptr, ulint type, mtr_t* mtr);
 
-dulint					mutr_read_dulint(byte* ptr, ulint type, mtr_t* mtr);
+dulint					mtr_read_dulint(byte* ptr, ulint type, mtr_t* mtr);
 
 void					mtr_memo_release(mtr_t* mtr, void* object, ulint type);
 

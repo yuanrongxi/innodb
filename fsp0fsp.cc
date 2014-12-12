@@ -1110,7 +1110,7 @@ static ulint fseg_n_reserved_pages_low(fseg_inode_t* node, ulint* used, mtr_t* m
 	return ret;
 }
 
-ulint fseg_n_reserved_pages(fseg_header_t* node, ulint* used, mtr_t* mtr)
+ulint fseg_n_reserved_pages(fseg_header_t* header, ulint* used, mtr_t* mtr)
 {
 	ulint			ret;
 	fseg_header_t*	inode;
@@ -1137,7 +1137,7 @@ static void fseg_fill_free_list(fseg_inode_t* inode, ulint space, ulint hint, mt
 	ut_ad(inode && mtr);
 
 	reserved = fseg_n_reserved_pages_low(inode, &used, mtr);
-	if(reserved < FSEG_FREE_LIST_LIMIT * FSP_EXTENT_SIZE) /*达到一个segment的最大的page数*/
+	if(reserved < FSEG_FREE_LIST_LIMIT * FSP_EXTENT_SIZE) /*inode里面的page太少了，不需要一次性增加5个extent，在这个函数之前正价1个extent就行了*/
 		return;
 
 	/*inode还有free的page*/
@@ -1209,6 +1209,7 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 	ut_ad((direction >= FSP_UP) && (direction <= FSP_NO_DIR));
 	ut_ad(mach_read_from_4(seg_inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
 
+	/*获得seg inode对应的sement id*/
 	seg_id = mtr_read_dulint(seg_inode + FSEG_ID, MLOG_8BYTES, mtr);
 
 	ut_ad(ut_dulint_cmp(seg_id, ut_dulint_zero) > 0);
@@ -1222,16 +1223,16 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 		descr = xdes_get_descriptor(space, hint, mtr);
 	}
 
-	/*descr中的hit对应的也是空闲的*/
+	/*descr中的hit对应的也是空闲的,且xdes desc是隶属于inode*/
 	if((xdes_get_state(descr, mtr) == XDES_FSEG) && (0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, mtr), seg_id))
 		&& (xdes_get_bit(descr, XDES_FREE_BIT, hint % FSP_EXTENT_SIZE, mtr) == TRUE)){
 			ret_descr = descr;
 			ret_page = hint;
 	}
-	/*descr是空闲状态，但segment中的空闲page数量 < 1/8*/
+	/*descr是空闲状态，但segment inode中的空闲page数量 < 1/8,且碎片页被全部用完,为其分配一个extent*/
 	else if((xdes_get_state(descr, mtr) == XDES_FREE) && ((reserved - used) < reserved / FSEG_FILLFACTOR)
 		&& (used >= FSEG_FRAG_LIMIT)){
-			/*获取一个新的区*/
+		/*获取一个新的extent*/
 		ret_descr = fsp_alloc_free_extent(space, hint, mtr);
 		ut_a(ret_descr == descr);
 
@@ -1239,12 +1240,13 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 		mlog_write_dulint(ret_descr + XDES_ID, seg_id, MLOG_8BYTES, mtr);
 
 		flst_add_last(seg_inode + FSEG_FREE, ret_descr + XDES_FLST_NODE, mtr);
-		/*将剩余的page隐射到对应的extent上，用extent进行segment填充*/
+
+		/*用extent进行inode free list填充,如果inode很大，会连续追加了4个extent*/
 		fseg_fill_free_list(seg_inode, space, hint + FSP_EXTENT_SIZE, mtr);
 
 		ret_page = hint;
 	}
-	/*segment的页已经达到最大使用数量*/
+	/*从inode的free list中获取一个页*/
 	else if((direction != FSP_NO_DIR) && ((reserved - used) < reserved / FSEG_FILLFACTOR)
 		&& (used >= FSEG_FRAG_LIMIT) && (NULL != (ret_descr = fseg_alloc_free_extent(seg_inode, space, mtr)))){
 		ret_page = xdes_get_offset(ret_descr);	
@@ -1256,7 +1258,7 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 		&& (0 == ut_dulint_cmp(mtr_read_dulint(descr + XDES_ID, MLOG_8BYTES, mtr), seg_id))
 		&& (!xdes_is_full(descr, mtr))){ 
 			ret_descr = descr;
-			/*定位到新的空闲page*/
+			/*在xdes 中向hint后找一个空闲页*/
 			ret_page = xdes_get_offset(ret_descr) + xdes_find_bit(ret_descr, XDES_FREE_BIT, TRUE, hint % FSP_EXTENT_SIZE, mtr);
 	}
 	else if(reserved - used > 0){ /*fseg inode不需要做任何调整*/
@@ -1270,8 +1272,7 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 		ret_descr = xdes_lst_get_descriptor(space, first, mtr);
 		ret_page = xdes_get_offset(ret_descr) + xdes_find_bit(ret_descr, XDES_FREE_BIT, TRUE, 0, mtr);
 	}
-	else if(used < FSEG_FRAG_LIMIT){ /*inode没有空闲的页，但是fseg中还可以使用更多的页,分配一个碎片页？*/
-		/*分配一个新的页，并将其插入到seg inode当中*/
+	else if(used < FSEG_FRAG_LIMIT){ /*inode碎片页array中有空闲也*/
 		ret_page = fsp_alloc_free_page(space, hint, mtr);
 		ret_descr = NULL;
 
@@ -1283,7 +1284,7 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 			fseg_set_nth_frag_page_no(seg_inode, n, ret_page, mtr);
 		}
 	}
-	else{
+	else{/*碎片页用完了，但是inode free list又没有空闲的extent*/
 		ret_descr = fseg_alloc_free_extent(seg_inode, space, mtr);
 
 		if (ret_descr == NULL)
@@ -1295,7 +1296,7 @@ static ulint fseg_alloc_free_page_low(ulint space, fseg_inode_t* seg_inode, ulin
 	if(ret_page == FIL_NULL)
 		return FIL_NULL;
 
-	/*页还没有分配，对页进行创建并初始化*/
+	/*页不是从碎片页列表中获取的,需要对页的使用状态做更改*/
 	if(!frag_page_allocated){
 		page = buf_page_create(space, ret_page, mtr);
 		ut_a(page == buf_page_get(space, ret_page, RW_X_LATCH, mtr));
@@ -1339,9 +1340,12 @@ ulint fseg_alloc_free_page_general(fseg_header_t* seg_header, ulint hint, byte d
 			return FIL_NULL;
 	}
 
+	/*在inode当中获得一个page*/
 	page_no = fseg_alloc_free_page_low(buf_frame_get_space_id(inode), inode, hint, direction, mtr);
 	if(!has_done_reservation)
 		fil_space_release_free_extents(space, 2);
+
+	return page_no;
 }
 
 ulint fseg_alloc_free_page(fseg_header_t* seg_header, ulint hint, byte direction, mtr_t* mtr)
@@ -1408,7 +1412,7 @@ try_to_extend:
 	return FALSE;
 }
 
-/*space可用的空间*/
+/*space可用的空间的计算*/
 ulint fsp_get_available_space_in_free_extents(ulint space)
 {
 	fsp_header_t*	space_header;
@@ -1451,7 +1455,7 @@ ulint fsp_get_available_space_in_free_extents(ulint space)
 }
 
 /*标记一个已占用的page*/
-static void fseg_mark_page_used(fseg_inode_t* seg_inde, ulint space, ulint page, mtr_t* mtr)
+static void fseg_mark_page_used(fseg_inode_t* seg_inode, ulint space, ulint page, mtr_t* mtr)
 {
 	xdes_t*	descr;
 	ulint	not_full_n_used;
@@ -1471,7 +1475,7 @@ static void fseg_mark_page_used(fseg_inode_t* seg_inde, ulint space, ulint page,
 	not_full_n_used = mtr_read_ulint(seg_inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr);
 	not_full_n_used ++;
 
-	mlog_write_ulint(seg_inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr);
+	mlog_write_ulint(seg_inode + FSEG_NOT_FULL_N_USED, not_full_n_used, MLOG_4BYTES, mtr);
 	if(xdes_is_full(descr, mtr)){ /*extent满了，将extent从FSEG_NOT_FULL 移到FSEG_FULL*/
 		flst_remove(seg_inode + FSEG_NOT_FULL, descr + XDES_FLST_NODE, mtr);
 		flst_add_last(seg_inode + FSEG_FULL, descr + XDES_FLST_NODE, mtr);
@@ -1514,7 +1518,7 @@ static void fseg_free_page_low(fseg_inode_t* seg_inode, ulint space, ulint page,
 	}
 
 	state = xdes_get_state(descr, mtr);
-	if(state != XDES_FSEG){
+	if(state != XDES_FSEG){ /*碎页*/
 		for(i = 0;; i++){
 			/*将槽位赋空*/
 			if(fseg_get_nth_frag_page_no(seg_inode, i, mtr) == page){
@@ -1551,7 +1555,7 @@ static void fseg_free_page_low(fseg_inode_t* seg_inode, ulint space, ulint page,
 	}
 }
 
-/*释放一个页*/
+/*inode方式释放一个页*/
 void fseg_free_page(fseg_header_t* seg_header, ulint space, ulint page, mtr_t* mtr)
 {
 	fseg_inode_t*	seg_inode;
@@ -1591,9 +1595,9 @@ static void fseg_free_extent(fseg_inode_t* seg_inode, ulint space, ulint page, m
 
 	if(xdes_is_full(descr, mtr))/*将extent对象从inode full list中删除*/
 		flst_remove(seg_inode + FSEG_FULL, descr + XDES_FLST_NODE, mtr); 
-	else if(xdes_is_free(descr, mtr))/*将extent对象从inode free list中删除*/
+	else if(xdes_is_free(descr, mtr))/*将extent对象从inode free list中删除,会归还个space->free_list*/
 		flst_remove(seg_inode + FSEG_FREE, descr + XDES_FLST_NODE);
-	else{
+	else{ /*xdes descr还有其他的也被占用了*/
 		flst_remove(seg_inode + FSEG_NOT_FULL, descr + XDES_FLST_NODE, mtr);
 		not_full_n_used = mtr_read_ulint(seg_inode + FSEG_NOT_FULL_N_USED, MLOG_4BYTES, mtr);
 		descr_n_used = xdes_get_n_used(descr, mtr);
@@ -1636,11 +1640,12 @@ ibool fseg_free_step(fseg_header_t* header, mtr_t* mtr)
 	descr = fseg_get_first_extent(inode, mtr); /*获得inode中第一个extent*/
 	if(descr != NULL){
 		page = xdes_get_offset(descr);
-		fseg_free_extent(inode, space, page, mtr);
+		fseg_free_extent(inode, space, page, mtr); /*释放inode里面的extent*/
 
 		return FALSE;
 	}
 
+	/*当释放完成inode中所有的extent，再逐步释放frag array中占用的页*/
 	n = fseg_find_last_used_frag_page_slot(inode, mtr);
 	if(n == ULINT_UNDEFINED){ /*已经从slot中删除了，可以直接释放inode*/
 		fsp_free_seg_inode(space, inode, mtr);
@@ -1713,10 +1718,10 @@ void fseg_free(ulint space, ulint page_no, ulint offset)
 		header = fut_get_ptr(space, addr, RW_X_LATCH, &mtr);
 		finished = fseg_free_step(header, &mtr);
 		mtr_commit(&mtr);
-	}
 
-	if(finished)
-		return ;
+		if(finished)
+			return ;
+	}
 }
 
 static xdes_t* fseg_get_first_extent(fseg_inode_t* inode, mtr_t* mtr)
