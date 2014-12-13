@@ -41,6 +41,9 @@
     <Filter Include="fut">
       <UniqueIdentifier>{09c430de-06d1-4900-bc9c-cbd3c6ef937c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="page">
+      <UniqueIdentifier>{dc3d52f1-285d-47e8-b709-a22a90e66b3a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -69,6 +72,9 @@
     </None>
     <None Include="fut0lst.inl">
       <Filter>fut</Filter>
+    </None>
+    <None Include="page0page.inl">
+      <Filter>page</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -188,6 +194,9 @@
     </ClInclude>
     <ClInclude Include="page0types.h">
       <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="page0page.h">
+      <Filter>page</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
