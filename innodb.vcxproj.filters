@@ -192,10 +192,10 @@
     <ClInclude Include="fil0fil.h">
       <Filter>fil</Filter>
     </ClInclude>
-    <ClInclude Include="page0types.h">
-      <Filter>include</Filter>
-    </ClInclude>
     <ClInclude Include="page0page.h">
+      <Filter>page</Filter>
+    </ClInclude>
+    <ClInclude Include="page0types.h">
       <Filter>page</Filter>
     </ClInclude>
   </ItemGroup>

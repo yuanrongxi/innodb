@@ -62,7 +62,7 @@ typedef page_dir_slot_t				page_dir_t;
 
 /*目录owned的范围区间是[4, 8]*/
 #define PAGE_DIR_SLOT_MAX_N_OWNED	8
-#define PAGE_DIR_SLOT_MAX_N_OWNED	4
+#define PAGE_DIR_SLOT_MIN_N_OWNED	4
 
 /**************************************************************/
 UNIV_INLINE dulint		page_get_max_trx_id(page_t* page);
@@ -79,7 +79,7 @@ UNIV_INLINE void		page_header_reset_last_insert(page_t*, page, mtr_t* mtr);
 
 UNIV_INLINE	rec_t*		page_get_infimum_rec(page_t* page);
 
-UNIV_INLINE rec_t*		page_get_suremum_rec(page_t* page);
+UNIV_INLINE rec_t*		page_get_supremum_rec(page_t* page);
 
 rec_t*					page_get_middle_rec(page_t* page);
 
