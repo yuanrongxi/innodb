@@ -158,11 +158,16 @@ UNIV_INLINE int page_cmp_dtuple_rec_with_match(dtuple_t* dtuple, rec_t* rec, uli
 	page = buf_frame_align(rec);
 	if(rec == page_get_infimum_rec(page))
 		return 1;
-	else if(rec == page_get_suremum_rec(page))
+	else if(rec == page_get_supremum_rec(page))
 		return -1;
 	else
 		return cmp_dtuple_rec_with_match(dtuple, rec, matched_fields, matched_bytes);
 
+}
+
+UNIV_INLINE ulint page_get_n_recs(page_t* page)
+{
+	return page_header_get_field(page, PAGE_N_RECS);
 }
 
 UNIV_INLINE ulint page_dir_get_n_slots(page_t* page)

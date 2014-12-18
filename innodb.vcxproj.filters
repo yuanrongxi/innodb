@@ -76,6 +76,9 @@
     <None Include="page0page.inl">
       <Filter>page</Filter>
     </None>
+    <None Include="page0cur.inl">
+      <Filter>page</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -198,6 +201,9 @@
     <ClInclude Include="page0types.h">
       <Filter>page</Filter>
     </ClInclude>
+    <ClInclude Include="page0cur.h">
+      <Filter>page</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -298,6 +304,12 @@
     </ClCompile>
     <ClCompile Include="fut0lst.cc">
       <Filter>fut</Filter>
+    </ClCompile>
+    <ClCompile Include="page0page.cc">
+      <Filter>page</Filter>
+    </ClCompile>
+    <ClCompile Include="page0cur.cc">
+      <Filter>page</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

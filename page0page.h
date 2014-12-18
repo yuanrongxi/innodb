@@ -24,21 +24,21 @@ typedef byte	page_header_t;
 
 /*PAGE HEADER各种信息偏移*/
 #define	PAGE_N_DIR_SLOTS			0		/*page directory拥有的slot个数*/
-#define PAGE_HEAP_TOP				2
-#define PAGE_N_HEAP					4
-#define PAGE_FREE					6
-#define PAGE_GARBAGE				8
-#define PAGE_LAST_INSERT			10
-#define PAGE_DIRECTION				12
-#define PAGE_N_DIRECTION			14
-#define PAGE_N_RECS					16
-#define PAGE_MAX_TRX_ID				18
-#define PAGE_HEADER_PRIV_END		26
-#define PAGE_LEVEL					28
-#define PAGE_BTR_SEG_LEAF			36
+#define PAGE_HEAP_TOP				2		/*heap中空闲位置的偏移量*/
+#define PAGE_N_HEAP					4		/*heap中的记录数*/
+#define PAGE_FREE					6		/*指向page中空闲空间的偏移量*/
+#define PAGE_GARBAGE				8		/*已删除的记录字节数*/
+#define PAGE_LAST_INSERT			10		/*最后插入记录的位置*/
+#define PAGE_DIRECTION				12		/*插入记录的操作方向,PAGE_LEFT PAGE_RIGHT PAGE_SAME_REC PAGE_SAME_PAGE PAGE_NO_DIRECTION*/
+#define PAGE_N_DIRECTION			14		/*同一方向连续插入的记录数*/
+#define PAGE_N_RECS					16		/*页中存在的记录数*/
+#define PAGE_MAX_TRX_ID				18		/*修改当前页最大的事务ID*/
+#define PAGE_HEADER_PRIV_END		26		/**/
+#define PAGE_LEVEL					28		/*当前页在索引树的层位置*/
+#define PAGE_BTR_SEG_LEAF			36		/*B+树叶子节点所在段的segment header信息，*/
 #define PAGE_BTR_IBUF_FREE_LIST		PAGE_BTR_SEG_LEAF
 #define PAGE_BTR_IBUF_FREE_LIST_NODE PAGE_BTR_SEG_LEAF
-#define PAGE_BTR_SEG_TOP			(36 + FSEG_HEADER_SIZE)
+#define PAGE_BTR_SEG_TOP			(36 + FSEG_HEADER_SIZE)	/*B+树非叶子节点所在段的segment header信息*/
 #define PAGE_DATA					(PAGE_HEADER + 36 + 2 * FSEG_HEADER_SIZE)
 #define PAGE_INFIMUM				(PAGE_DATA + 1 + REC_N_EXTRA_BYTES)				/*本page中索引最小的记录位置*/
 #define PAGE_SUPREMUM				(PAGE_DATA + 2 + 2 * REC_N_EXTRA_BYTES + 8)		/*本page中索引最大的记录位置*/
@@ -85,7 +85,7 @@ rec_t*					page_get_middle_rec(page_t* page);
 
 UNIV_INLINE int			page_cmp_dtuple_rec_with_match(dtuple_t* dtuple, rec_t* rec, ulint* matched_fields, ulint* matched_bytes);
 
-UNIV_INLINE ulint		page_get_n_rec(page_t* page);
+UNIV_INLINE ulint		page_get_n_recs(page_t* page);
 
 ulint					page_rec_get_n_recs_before(rec_t* rec);
 

@@ -82,6 +82,7 @@
     <None Include="log0recv.inl" />
     <None Include="mtr0log.inl" />
     <None Include="mtr0mtr.inl" />
+    <None Include="page0cur.inl" />
     <None Include="page0page.inl" />
     <None Include="univ.h" />
   </ItemGroup>
@@ -106,6 +107,7 @@
     <ClInclude Include="os0file.h" />
     <ClInclude Include="os0sync.h" />
     <ClInclude Include="os0thread.h" />
+    <ClInclude Include="page0cur.h" />
     <ClInclude Include="page0page.h" />
     <ClInclude Include="page0types.h" />
     <ClInclude Include="rem0types.h" />
@@ -146,6 +148,8 @@
     <ClCompile Include="os0file.cc" />
     <ClCompile Include="os0sync.cc" />
     <ClCompile Include="os0thread.cc" />
+    <ClCompile Include="page0cur.cc" />
+    <ClCompile Include="page0page.cc" />
     <ClCompile Include="sync0arr.cc" />
     <ClCompile Include="sync0rw.cc" />
     <ClCompile Include="sync0sync.cc" />
