@@ -15,7 +15,7 @@ UNIV_INLINE byte* mlog_open(mtr_t* mtr, ulint size)
 	return dyn_array_open(mlog, size);
 }
 
-UNIV_INLINE mlog_close(mtr_t* mtr, byte* ptr)
+UNIV_INLINE void mlog_close(mtr_t* mtr, byte* ptr)
 {
 	dyn_array_t* mlog;
 	ut_ad(mtr_get_log_mode(mtr) != MTR_LOG_NONE);
