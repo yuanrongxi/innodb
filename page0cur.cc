@@ -3,6 +3,7 @@
 #include "rem0cmp.h"
 #include "mtr0log.h"
 #include "log0recv.h"
+#include "rem0types.h"
 
 ulint page_cur_short_succ = 0;
 ulint page_rnd = 976722341;
@@ -31,6 +32,7 @@ UNIV_INLINE ibool page_cur_try_search_shortcut(page_t* page, dtuple_t* tuple,
 	up_match = low_match;
 	up_bytes = low_bytes;
 
+	/*检查TUPLE是否超出范围*/
 	cmp = page_cmp_dtuple_rec_with_match(tuple, rec, &low_match, &low_bytes);
 	if(cmp == -1) /*rec是supremum*/
 		return FALSE;
@@ -89,13 +91,9 @@ void page_cur_search_with_match(page_t* page, dtuple_t* tuple, ulint mode,
 		&& (page_header_get_field(page, PAGE_DIRECTION) == PAGE_RIGHT)) {
 
 			if (page_cur_try_search_shortcut(page, tuple,
-				iup_matched_fields,
-				iup_matched_bytes,
-				ilow_matched_fields,
-				ilow_matched_bytes,
-				cursor)) {
+				iup_matched_fields, iup_matched_bytes,
+				ilow_matched_fields, ilow_matched_bytes, cursor))
 					return;
-			}
 	}
 
 	if (mode == PAGE_CUR_DBG)
@@ -119,6 +117,10 @@ void page_cur_search_with_match(page_t* page, dtuple_t* tuple, ulint mode,
 		ut_pair_min(&cur_matched_fields, &cur_matched_bytes,
 			low_matched_fields, low_matched_bytes,
 			up_matched_fields, up_matched_bytes);
+
+		cmp = cmp_dtuple_rec_with_match(tuple, mid_rec,
+			&cur_matched_fields,
+			&cur_matched_bytes);
 
 		if(cmp == -1){
 			low = mid;
