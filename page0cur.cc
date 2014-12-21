@@ -149,7 +149,7 @@ void page_cur_search_with_match(page_t* page, dtuple_t* tuple, ulint mode,
 
 	slot = page_dir_get_nth_slot(page, up);
 	up_rec = page_dir_slot_get_rec(slot);
-
+	/*记录定位*/
 	while(page_rec_get_next(low_rec) != up_rec){
 		mid_rec = page_rec_get_next(low_rec);
 
@@ -237,6 +237,8 @@ static void page_cur_insert_rec_write_log(rec_t* insert_rec, ulint rec_size, rec
 
 	extra_size = rec_get_extra_size(insert_rec);
 	cur_extra_size = rec_get_extra_size(cursor_rec);
+
+	cur_rec_size = get_rec_size(cursor_rec);
 
 	ins_ptr = insert_rec - extra_size;
 
@@ -567,7 +569,7 @@ void page_copy_rec_list_end_to_created_page(page_t* new_page, page_t* page, rec_
 	count = 0;
 	slot_index = 0;
 	n_recs = 0;
-
+	/*将page中的rec拷贝至new page*/
 	while(rec != page_get_supremum_rec(page)){
 		insert_rec = rec_copy(heap_top, rec);
 		rec_set_next_offs(prev_rec, insert_rec - new_page);
@@ -599,7 +601,7 @@ void page_copy_rec_list_end_to_created_page(page_t* new_page, page_t* page, rec_
 
 	if((slot_index > 0) && (count + 1 + (PAGE_DIR_SLOT_MAX_N_OWNED + 1) / 2) <= PAGE_DIR_SLOT_MAX_N_OWNED){
 		count += (PAGE_DIR_SLOT_MAX_N_OWNED + 1) / 2;
-		page_dir_slot_set_n_owned(slot);
+		page_dir_slot_set_n_owned(slot, 0);
 
 		slot_index --;
 	}
