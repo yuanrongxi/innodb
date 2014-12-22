@@ -186,7 +186,7 @@ UNIV_INLINE page_dir_slot_t* page_dir_get_nth_slot(page_t* page, ulint n)
 }
 
 /*检查记录是否是在page*/
-UNIV_INLINE ibool page_rec_check(rec_t* rec)
+UNIV_INLINE ibool page_rec_check(rec_t* rec)	
 {
 	page_t* page;
 	ut_a(rec);
