@@ -25,7 +25,7 @@ typedef byte	page_header_t;
 /*PAGE HEADER各种信息偏移*/
 #define	PAGE_N_DIR_SLOTS			0		/*page directory拥有的slot个数*/
 #define PAGE_HEAP_TOP				2		/*heap中空闲位置的偏移量*/
-#define PAGE_N_HEAP					4		/*heap中的记录数*/
+#define PAGE_N_HEAP					4		/*heap中的记录数,所有分配出去的记录数，free rec + PAGE_N_RECS + 2*/
 #define PAGE_FREE					6		/*指向page中空闲空间的偏移量*/
 #define PAGE_GARBAGE				8		/*已删除的记录字节数*/
 #define PAGE_LAST_INSERT			10		/*最后插入记录的位置*/

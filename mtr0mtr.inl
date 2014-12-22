@@ -97,8 +97,17 @@ UNIV_INLINE ulint mtr_get_log(mtr_t* mtr)
 	return &mtr->log;
 }
 
+UNIV_INLINE ulint mtr_get_log_mode(mtr_t* mtr)
+{
+	ut_ad(mtr);
+	ut_ad(mtr->log_mode >= MTR_LOG_ALL);
+	ut_ad(mtr->log_mode <= MTR_LOG_SHORT_INSERTS);
+
+	return(mtr->log_mode);
+}
+
 /*设置mtr的mode,并返回设置前的mode*/
-UNIV_INLINE ulint mtr_set_log(mtr_t* mtr, ulint mode)
+UNIV_INLINE ulint mtr_set_log_mode(mtr_t* mtr, ulint mode)
 {
 	ulint	old_mode;
 
