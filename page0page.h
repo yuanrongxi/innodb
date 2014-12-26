@@ -95,7 +95,7 @@ UNIV_INLINE ibool		page_rec_check(rec_t* rec);
 
 UNIV_INLINE rec_t*		page_dir_slot_get_rec(page_dir_slot_t* slot);
 
-UNIV_INLINE void		page_dir_slot_set_rec(page_dir_slot_t* slot);
+UNIV_INLINE void		page_dir_slot_set_rec(page_dir_slot_t* slot, rec_t* rec);
 
 UNIV_INLINE ulint		page_dir_slot_get_n_owned(page_dir_slot_t* slot);
 

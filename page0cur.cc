@@ -487,7 +487,7 @@ rec_t* page_cur_insert_rec_low(page_cur_t* cursor, dtuple_t* tuple, ulint data_s
 	}
 
 	/*¼ÇÂ¼Ò»Ìõmtr log*/
-	page_cur_insert_rec_write_log(insert_rec, rec, rec_size, current_rec, mtr);
+	page_cur_insert_rec_write_log(insert_rec, rec_size, current_rec, mtr);
 
 	return insert_rec;
 }
@@ -675,7 +675,7 @@ void page_cur_delete_rec(page_cur_t* cursor, mtr_t* mtr)
 
 	cur_slot_no = page_dir_find_owner_slot(current_rec);
 	cur_dir_slot = page_dir_get_nth_slot(page, cur_slot_no);
-	cur_n_owned = page_dir_slot_set_n_owned(cur_dir_slot);
+	cur_n_owned = page_dir_slot_get_n_owned(cur_dir_slot);
 
 	page_cur_delete_rec_write_log(current_rec, mtr);
 
@@ -711,7 +711,7 @@ void page_cur_delete_rec(page_cur_t* cursor, mtr_t* mtr)
 	page_mem_free(page, current_rec);
 
 	if(cur_n_owned <= PAGE_DIR_SLOT_MIN_N_OWNED)
-		page_dir_balance_slot(page);
+		page_dir_balance_slot(page, cur_slot_no);
 }
 
 
