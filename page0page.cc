@@ -1007,6 +1007,7 @@ func_exit:
 	return(ret);
 }
 
+/*通过heap no偏移找到对应的rec*/
 rec_t* page_find_rec_with_heap_no(page_t* page, ulint heap_no)
 {
 	page_cur_t	cur;
