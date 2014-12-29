@@ -44,6 +44,12 @@
     <Filter Include="page">
       <UniqueIdentifier>{dc3d52f1-285d-47e8-b709-a22a90e66b3a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="rem">
+      <UniqueIdentifier>{9bd398b4-7fda-4c23-9b0e-1b6d9d8a6000}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="data">
+      <UniqueIdentifier>{de1754a2-e365-46fb-ab9e-da68ed42163b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -78,6 +84,9 @@
     </None>
     <None Include="page0cur.inl">
       <Filter>page</Filter>
+    </None>
+    <None Include="data0type.inl">
+      <Filter>data</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -130,9 +139,6 @@
       <Filter>mem</Filter>
     </ClInclude>
     <ClInclude Include="ut0mem.h">
-      <Filter>unit</Filter>
-    </ClInclude>
-    <ClInclude Include="rem0types.h">
       <Filter>unit</Filter>
     </ClInclude>
     <ClInclude Include="mem0dbg.h">
@@ -203,6 +209,15 @@
     </ClInclude>
     <ClInclude Include="page0cur.h">
       <Filter>page</Filter>
+    </ClInclude>
+    <ClInclude Include="rem0types.h">
+      <Filter>rem</Filter>
+    </ClInclude>
+    <ClInclude Include="data0type.h">
+      <Filter>data</Filter>
+    </ClInclude>
+    <ClInclude Include="data0types.h">
+      <Filter>data</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -310,6 +325,9 @@
     </ClCompile>
     <ClCompile Include="page0cur.cc">
       <Filter>page</Filter>
+    </ClCompile>
+    <ClCompile Include="data0type.cc">
+      <Filter>data</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

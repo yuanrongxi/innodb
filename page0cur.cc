@@ -292,8 +292,8 @@ static void page_cur_insert_rec_write_log(rec_t* insert_rec, ulint rec_size, rec
 
 	/*当前mtr log保存*/
 	if(rec_size - i < MLOG_BUF_MARGIN){
-		ut_memcpy(log_ptr, ins_ptr, rec_size - 1);
-		log_ptr += rec_size - 1;
+		ut_memcpy(log_ptr, ins_ptr, rec_size - i);
+		log_ptr += rec_size - i;
 
 		mlog_close(mtr, log_ptr);
 	}
@@ -690,7 +690,7 @@ void page_cur_delete_rec(page_cur_t* cursor, mtr_t* mtr)
 		prev_rec = rec;
 		rec = page_rec_get_next(rec);
 	}
-	/*查找要删除记录的后一条记录*/
+	/*cursor移动到要删除记录的后一条记录*/
 	page_cur_move_to_next(cursor);
 	next_rec = cursor->rec;
 

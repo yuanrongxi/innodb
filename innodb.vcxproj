@@ -74,6 +74,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <None Include="data0type.inl" />
     <None Include="dyn0dyn.inl" />
     <None Include="fsp0fsp.inl" />
     <None Include="fut0fut.inl" />
@@ -87,6 +88,8 @@
     <None Include="univ.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="data0type.h" />
+    <ClInclude Include="data0types.h" />
     <ClInclude Include="db0err.h" />
     <ClInclude Include="dyn0dyn.h" />
     <ClInclude Include="fil0fil.h" />
@@ -130,6 +133,7 @@
     <ClInclude Include="ut0wqueque.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="data0type.cc" />
     <ClCompile Include="dyn0dyn.cc" />
     <ClCompile Include="fil0fil.cc" />
     <ClCompile Include="fsp0fsp.cc" />
