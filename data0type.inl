@@ -41,7 +41,7 @@ UNIV_INLINE ulint dtype_get_len(dtype_t* type)
 	return type->len;
 }
 
-UNIV_INLINE dtype_get_prec(dtype_t* type)
+UNIV_INLINE ulint dtype_get_prec(dtype_t* type)
 {
 	ut_ad(type);
 	return type->prec;
