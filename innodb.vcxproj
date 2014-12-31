@@ -74,6 +74,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <None Include="data0data.inl" />
     <None Include="data0type.inl" />
     <None Include="dyn0dyn.inl" />
     <None Include="fsp0fsp.inl" />
@@ -88,6 +89,7 @@
     <None Include="univ.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="data0data.h" />
     <ClInclude Include="data0type.h" />
     <ClInclude Include="data0types.h" />
     <ClInclude Include="db0err.h" />

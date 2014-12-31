@@ -88,6 +88,9 @@
     <None Include="data0type.inl">
       <Filter>data</Filter>
     </None>
+    <None Include="data0data.inl">
+      <Filter>data</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -217,6 +220,9 @@
       <Filter>data</Filter>
     </ClInclude>
     <ClInclude Include="data0types.h">
+      <Filter>data</Filter>
+    </ClInclude>
+    <ClInclude Include="data0data.h">
       <Filter>data</Filter>
     </ClInclude>
   </ItemGroup>
