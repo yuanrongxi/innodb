@@ -28,9 +28,9 @@ struct dfield_struct
 struct dtuple_struct
 {
 	ulint			info_bits;
-	ulint			n_fields;
-	ulint			n_fields_cmp;
-	dfield_t*		fields;
+	ulint			n_fields;		/*列数*/
+	ulint			n_fields_cmp;	/*列比较时的列数？*/
+	dfield_t*		fields;			/*列对象数组*/
 
 	UT_LIST_NODE_T(dtuple_t) tuple_list;
 	ulint			magic_n;
@@ -39,9 +39,9 @@ struct dtuple_struct
 /*超大的field*/
 typedef struct big_rec_field_struct
 {
-	ulint		field_no;	/*field number*/
-	ulint		len;		/*存储的数据长度*/
-	byte*		data;		/*存储的数据*/
+	ulint		field_no;			/*field number*/
+	ulint		len;				/*存储的数据长度*/
+	byte*		data;				/*存储的数据*/
 }big_rec_field_t;
 
 typedef struct big_rec_struct 
@@ -118,6 +118,8 @@ void					dtuple_gen_test_tuple_TPC_A(dtuple_t* tuple, ulint i, byte* buf);
 void					dtuple_gen_search_tuple_TPC_A(dtuple_t* tuple, ulint i, byte* buf);
 void					dtuple_gen_test_tuple_TPC_C(dtuple_t* tuple, ulint i, byte* buf);
 void					dtuple_gen_search_tuple_TPC_C(dtuple_t* tuple, ulint i, byte* buf);
+
+#include "data0data.inl"
 
 #endif
 

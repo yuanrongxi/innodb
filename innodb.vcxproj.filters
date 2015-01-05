@@ -225,6 +225,9 @@
     <ClInclude Include="data0data.h">
       <Filter>data</Filter>
     </ClInclude>
+    <ClInclude Include="rem0rec.h">
+      <Filter>rem</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">

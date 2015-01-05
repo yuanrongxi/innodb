@@ -115,6 +115,7 @@
     <ClInclude Include="page0cur.h" />
     <ClInclude Include="page0page.h" />
     <ClInclude Include="page0types.h" />
+    <ClInclude Include="rem0rec.h" />
     <ClInclude Include="rem0types.h" />
     <ClInclude Include="sync0arr.h" />
     <ClInclude Include="sync0rw.h" />
