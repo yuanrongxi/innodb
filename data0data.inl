@@ -36,7 +36,7 @@ UNIV_INLINE void dfield_set_len(dfield_t* field, ulint len)
 	field->len = len;
 }
 
-UNIV_INLINE void dfield_set_data(dfield_t* field, ulint len)
+UNIV_INLINE void dfield_set_data(dfield_t* field, byte* data, ulint len)
 {
 	ut_ad(filed);
 	field->len = len;
@@ -171,6 +171,7 @@ UNIV_INLINE void dtuple_set_types_binary(dtuple_t* tuple, ulint n)
 	}
 }
 
+/*对整个记录做HASH*/
 UNIV_INLINE ulint dtuple_fold(dtuple_t* tuple, ulint n_fields, ulint n_bytes, dulint tree_id)
 {
 	dfield_t*	field;
@@ -217,6 +218,6 @@ UNIV_INLINE void data_write_sql_null(byte* data, ulint len)
 	ulint j;
 
 	for (j = 0; j < len; j++) 
-		data[j] = '\0';
+		data[j] = 0;
 }
 

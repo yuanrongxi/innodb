@@ -335,5 +335,8 @@
     <ClCompile Include="data0type.cc">
       <Filter>data</Filter>
     </ClCompile>
+    <ClCompile Include="data0data.cc">
+      <Filter>data</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

@@ -65,7 +65,7 @@ UNIV_INLINE void		dfield_set_type(dfield_t* field, dtype_t* type);
 UNIV_INLINE void*		dfield_get_data(dfield_t* field);
 UNIV_INLINE ulint		dfield_get_len(dfield_t* field);
 UNIV_INLINE void		dfield_set_len(dfield_t* field, ulint len);
-UNIV_INLINE void		dfield_set_data(dfield_t* field, ulint len);
+UNIV_INLINE void		dfield_set_data(dfield_t* field, byte* data, ulint len);
 
 UNIV_INLINE void		data_write_sql_null(byte* data, ulint len);
 
@@ -75,7 +75,6 @@ UNIV_INLINE void		dfield_copy(dfield_t* field1, dfield_t* field2);
 UNIV_INLINE ibool		dfield_datas_are_binary_equal(dfield_t* field1, dfield_t* field2);
 ibool					dfield_data_is_binary_equal(dfield_t* field, ulint len, byte* data);
 
-UNIV_INLINE ulint		dtuple_get_n_fields(dtuple_t* tuple);
 UNIV_INLINE ulint		dtuple_get_n_fields(dtuple_t* tuple);
 UNIV_INLINE dfield_t*	dtuple_get_nth_field(dtuple_t* tuple, ulint n);
 

@@ -135,6 +135,7 @@
     <ClInclude Include="ut0wqueque.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="data0data.cc" />
     <ClCompile Include="data0type.cc" />
     <ClCompile Include="dyn0dyn.cc" />
     <ClCompile Include="fil0fil.cc" />
