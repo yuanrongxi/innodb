@@ -79,7 +79,7 @@ void						rec_validate(rec_t* rec);
 void						rec_print(rec_t* rec);
 ulint						rec_sprintf(char* buf, ulint buf_len, rec_t* rec);
 
-#include "remrec.inl"
+#include "rem0rec.inl"
 
 #endif
 

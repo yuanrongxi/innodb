@@ -91,6 +91,9 @@
     <None Include="data0data.inl">
       <Filter>data</Filter>
     </None>
+    <None Include="rem0rec.inl">
+      <Filter>rem</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">

@@ -86,6 +86,7 @@
     <None Include="mtr0mtr.inl" />
     <None Include="page0cur.inl" />
     <None Include="page0page.inl" />
+    <None Include="rem0rec.inl" />
     <None Include="univ.h" />
   </ItemGroup>
   <ItemGroup>
