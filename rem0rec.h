@@ -42,6 +42,8 @@ UNIV_INLINE ulint			rec_get_heap_no(rec_t* rec);
 UNIV_INLINE void			rec_set_heap_no(rec_t* rec, ulint heap_no);
 
 UNIV_INLINE ibool			rec_get_1byte_offs_flag(rec_t* rec);
+UNIV_INLINE void			rec_set_1byte_offs_flag(rec_t* rec, ibool flag);
+
 byte*						rec_get_nth_field(rec_t* rec, ulint n, ulint* len); 
 
 UNIV_INLINE ulint			rec_get_nth_field_size(rec_t* rec, ulint n);
