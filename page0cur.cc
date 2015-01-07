@@ -23,6 +23,7 @@ UNIV_INLINE ibool page_cur_try_search_shortcut(page_t* page, dtuple_t* tuple,
 
 	ut_ad(dtuple_check_typed(tuple));
 
+	/*获得最后一次插入的rec_t*/
 	rec = page_header_get_ptr(page, PAGE_LAST_INSERT);
 	ut_ad(rec);
 	ut_ad(page_rec_is_user_rec(rec));
@@ -34,12 +35,12 @@ UNIV_INLINE ibool page_cur_try_search_shortcut(page_t* page, dtuple_t* tuple,
 
 	/*检查TUPLE是否超出范围*/
 	cmp = page_cmp_dtuple_rec_with_match(tuple, rec, &low_match, &low_bytes);
-	if(cmp == -1) /*rec是supremum*/
+	if(cmp == -1) /*rec > tuple,返回FALSE*/
 		return FALSE;
 
-	next_rec = page_rec_get_next(rec);
+	next_rec = page_rec_get_next(rec); 
 	cmp = page_cmp_dtuple_rec_with_match(tuple, next_rec, &up_match, &up_bytes);
-	if(cmp != -1)
+	if(cmp != -1) /*next_rec <= tuple,返回FALSE*/
 		return FALSE;
 
 	cursor->rec = rec;

@@ -52,7 +52,8 @@ UNIV_INLINE ibool			rec_get_nth_field_extern_bit(rec_t* rec, ulint i);
 
 UNIV_INLINE ibool			rec_contains_externally_stored_field(rec_t* rec);
 
-void						rec_set_nth_field_extern_bit(rec_t* rec, ulint* vec, ulint n_fields, mtr_t* mtr);
+void						rec_set_nth_field_extern_bit(rec_t* rec, ulint i, ibool val, mtr_t* mtr);
+void						rec_set_field_extern_bits(rec_t* rec, ulint* vec, ulint n_fields, mtr_t* mtr);
 
 UNIV_INLINE void			rec_copy_nth_field(void* buf, rec_t* rec, ulint n, ulint* len);
 UNIV_INLINE void			rec_set_nth_field(rec_t* rec, ulint n, void* data, ulint len);
