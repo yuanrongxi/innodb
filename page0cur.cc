@@ -115,14 +115,12 @@ void page_cur_search_with_match(page_t* page, dtuple_t* tuple, ulint mode,
 		slot = page_dir_get_nth_slot(page, mid);
 		mid_rec = page_dir_slot_get_rec(slot);
 
+		/*获取较小match field和match byte*/
 		ut_pair_min(&cur_matched_fields, &cur_matched_bytes,
 			low_matched_fields, low_matched_bytes,
 			up_matched_fields, up_matched_bytes);
 
-		cmp = cmp_dtuple_rec_with_match(tuple, mid_rec,
-			&cur_matched_fields,
-			&cur_matched_bytes);
-
+		cmp = cmp_dtuple_rec_with_match(tuple, mid_rec, &cur_matched_fields, &cur_matched_bytes);
 		if(cmp == -1){
 			low = mid;
 			low_matched_fields = cur_matched_fields;
@@ -145,6 +143,7 @@ void page_cur_search_with_match(page_t* page, dtuple_t* tuple, ulint mode,
 		}
 	}
 
+	/*前面的二分查找是定位到前一个slot指向的记录和tuple所在的slot指向的记录，然后再在其中进行查找*/
 	slot = page_dir_get_nth_slot(page, low);
 	low_rec = page_dir_slot_get_rec(slot);
 
@@ -205,7 +204,7 @@ void page_cur_open_on_rnd_user_rec(page_t* page, page_cur_t* cursor)
 		return;
 	}
 
-	pag_rnd += 87584577;
+	page_rnd += 87584577;
 	rnd = page_rnd % page_get_n_recs(page);
 	rec = page_get_infimum_rec(page);
 	rec = page_rec_get_next(rec);
@@ -239,7 +238,7 @@ static void page_cur_insert_rec_write_log(rec_t* insert_rec, ulint rec_size, rec
 	extra_size = rec_get_extra_size(insert_rec);
 	cur_extra_size = rec_get_extra_size(cursor_rec);
 
-	cur_rec_size = get_rec_size(cursor_rec);
+	cur_rec_size = rec_get_size(cursor_rec);
 
 	ins_ptr = insert_rec - extra_size;
 
