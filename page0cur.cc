@@ -414,7 +414,7 @@ rec_t* page_cur_insert_rec_low(page_cur_t* cursor, dtuple_t* tuple, ulint data_s
 	rec_t*		insert_rec;
 	ulint		heap_no;
 	rec_t*		current_rec;
-	rec_t*		next_cur;
+	rec_t*		next_rec;
 	ulint		owner_slot;
 	rec_t*		owner_rec;
 	ulint		n_owned;

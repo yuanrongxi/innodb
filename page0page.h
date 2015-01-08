@@ -5,12 +5,13 @@
 
 #include "page0types.h"
 #include "fil0fil.h"
-#include "buf0buf.h"
-#include "data0data.h"
-#include "dict0dict.h"
 #include "rem0rec.h"
 #include "fsp0fsp.h"
 #include "mtr0mtr.h"
+#include "data0data.h"
+#include "buf0buf.h"
+#include "dict0dict.h"
+
 
 #ifdef UNIV_MATERIALIZE
 #undef UNIV_INLINE
@@ -73,9 +74,13 @@ UNIV_INLINE	void		page_update_max_trx_id(page_t*	page, dulint trx_id);
 
 UNIV_INLINE ulint		page_header_get_field(page_t* page, ulint field);
 
-UNIV_INLINE void		page_header_set_field(page_t* page, ulint field, byte* ptr);
+UNIV_INLINE void		page_header_set_field(page_t* page, ulint field, ulint val);
 
-UNIV_INLINE void		page_header_reset_last_insert(page_t*, page, mtr_t* mtr);
+UNIV_INLINE byte*		page_header_get_ptr(page_t* page, ulint field);
+
+UNIV_INLINE byte*		page_header_set_ptr(page_t* page,ulint field, byte* ptr);
+
+UNIV_INLINE void		page_header_reset_last_insert(page_t* page, mtr_t* mtr);
 
 UNIV_INLINE	rec_t*		page_get_infimum_rec(page_t* page);
 
