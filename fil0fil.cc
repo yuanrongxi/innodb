@@ -760,7 +760,7 @@ loop:
 	if(mode == OS_AIO_SYNC){ /*同步调用，会在os_aio中刷盘*/
 		mutex_enter(&(system->mutex));
 		/*io完成，更新对应的node状态*/
-		fil_node_complete_io(node);
+		fil_node_complete_io(node, system, type);
 		mutex_exit(&(system->mutex));
 
 		ut_ad(fil_validate());
