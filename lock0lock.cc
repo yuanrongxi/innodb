@@ -500,7 +500,7 @@ static lock_t* lock_rec_get_prev(lock_t* in_lock, ulint heap_no)
 		if(lock == in_lock)
 			return found_lock;
 
-		if(lock_rec_get_nth_bit(lock, heap_no))
+		if(lock_rec_get_nth_bit(lock, heap_no)) /*判断是否是本行记录的lock*/
 			found_lock = lock;
 
 		lock = lock_rec_get_next_on_page(lock);
