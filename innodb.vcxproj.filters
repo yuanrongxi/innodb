@@ -50,6 +50,12 @@
     <Filter Include="data">
       <UniqueIdentifier>{de1754a2-e365-46fb-ab9e-da68ed42163b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="lock">
+      <UniqueIdentifier>{06708565-7763-4d43-ae44-b999a1bb0ba4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="dict">
+      <UniqueIdentifier>{f3a2af99-136f-4537-b0df-fb2a94578552}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -96,6 +102,9 @@
     </None>
     <None Include="rem0cmp.inl">
       <Filter>rem</Filter>
+    </None>
+    <None Include="lock0lock.inl">
+      <Filter>lock</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -237,6 +246,15 @@
     <ClInclude Include="rem0cmp.h">
       <Filter>rem</Filter>
     </ClInclude>
+    <ClInclude Include="lock0lock.h">
+      <Filter>lock</Filter>
+    </ClInclude>
+    <ClInclude Include="lock0types.h">
+      <Filter>lock</Filter>
+    </ClInclude>
+    <ClInclude Include="dict0types.h">
+      <Filter>dict</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -355,6 +373,9 @@
     </ClCompile>
     <ClCompile Include="rem0cmp.cc">
       <Filter>rem</Filter>
+    </ClCompile>
+    <ClCompile Include="lock0lock.cc">
+      <Filter>lock</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

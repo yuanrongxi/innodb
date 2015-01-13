@@ -80,6 +80,7 @@
     <None Include="fsp0fsp.inl" />
     <None Include="fut0fut.inl" />
     <None Include="fut0lst.inl" />
+    <None Include="lock0lock.inl" />
     <None Include="log0log.inl" />
     <None Include="log0recv.inl" />
     <None Include="mtr0log.inl" />
@@ -95,6 +96,7 @@
     <ClInclude Include="data0type.h" />
     <ClInclude Include="data0types.h" />
     <ClInclude Include="db0err.h" />
+    <ClInclude Include="dict0types.h" />
     <ClInclude Include="dyn0dyn.h" />
     <ClInclude Include="fil0fil.h" />
     <ClInclude Include="fsp0fsp.h" />
@@ -103,6 +105,8 @@
     <ClInclude Include="ha0ha.h" />
     <ClInclude Include="ha0storage.h" />
     <ClInclude Include="hash0hash.h" />
+    <ClInclude Include="lock0lock.h" />
+    <ClInclude Include="lock0types.h" />
     <ClInclude Include="log0log.h" />
     <ClInclude Include="log0recv.h" />
     <ClInclude Include="mach0data.h" />
@@ -148,6 +152,7 @@
     <ClCompile Include="ha0ha.cc" />
     <ClCompile Include="ha0storage.cc" />
     <ClCompile Include="hash0hash.cc" />
+    <ClCompile Include="lock0lock.cc" />
     <ClCompile Include="log0log.cc" />
     <ClCompile Include="log0recv.cc" />
     <ClCompile Include="mach0data.cc" />
