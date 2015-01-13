@@ -122,10 +122,10 @@ rec_t* rec_convert_dtuple_to_rec_low(byte* destination, dtuple_t* tuple, ulint d
 	ulint		len;
 	ulint		i;
 
-	ut_ad(destination && dtuple);
-	ut_ad(dtuple_validate(dtuple));
-	ut_ad(dtuple_check_typed(dtuple));
-	ut_ad(dtuple_get_data_size(dtuple) == data_size);
+	ut_ad(destination && tuple);
+	ut_ad(dtuple_validate(tuple));
+	ut_ad(dtuple_check_typed(tuple));
+	ut_ad(dtuple_get_data_size(tuple) == data_size);
 	
 	n_fields = dtuple_get_n_fields(tuple);
 	ut_ad(n_fields > 0);
@@ -278,6 +278,7 @@ ibool rec_validate(rec_t* rec)
 			len_sum += rec_get_nth_field_size(rec, i);
 	}
 
+	/*对数据长度进行校验*/
 	if(len_sum != (ulint)(rec_get_end(rec) - rec)){
 		fprintf(stderr, "InnoDB: Error: record len should be %lu, len %lu\n", len_sum, (ulint)(rec_get_end(rec) - rec));
 		return(FALSE);
