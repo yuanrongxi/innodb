@@ -1257,6 +1257,93 @@ void lock_update_split_left(page_t* right_page, rec_t* left_page)
 	lock_mutex_exit_kernel();
 }
 
+void lock_update_merge_left(page_t* left_page, rec_t* orig_pred, page_t* right_page)
+{
+	lock_mutex_enter_kernel();
+
+	if(page_rec_get_next(orig_pred) != page_get_supremum_rec(left_page)){
+		/*将orig_pred继承left page的supremum的行锁，orig_pred是suprmum的前一条记录*/
+		lock_rec_inherit_to_gap(page_rec_get_next(orig_pred), page_get_supremum_rec(left_page));
+		/*释放掉supremum的行锁*/
+		lock_rec_reset_and_release_wait(page_get_supremum_rec(left_page));
+	}
+
+	/*将right_page的所有行锁转移到left page的supremum上，并且作为GAP范围锁(相当于锁升级)*/
+	lock_rec_move(page_get_supremum_rec(left_page), page_get_supremum_rec(right_page));
+	lock_rec_free_all_from_discard_page(right_page);
+
+	lock_mutex_exit_kernel();
+}
+
+/*清空heir的记录行锁，而后继承rec的锁变成heir的GAP范围锁，相当于锁升级*/
+void lock_rec_reset_and_inherit_gap_locks(rec_t* heir, rec_t* rec)
+{
+	mutex_enter(&kernel_mutex);	      		
+
+	lock_rec_reset_and_release_wait(heir);
+	lock_rec_inherit_to_gap(heir, rec);
+
+	mutex_exit(&kernel_mutex);	 
+}
+
+/*将page的所有行锁转移到heir上*/
+void lock_update_discard(rec_t* heir, page_t* page)
+{
+	rec_t* rec;
+
+	lock_mutex_enter_kernel();
+	/*page上没有行锁*/
+	if(lock_rec_get_first_on_page(page) == NULL){
+		lock_mutex_exit_kernel();
+		return ;
+	}
+
+	rec = page_get_infimum_rec(page);
+	for(;;){
+		lock_rec_inherit_to_gap(heir, rec);
+		lock_rec_reset_and_release_wait(rec);
+
+		if(rec == page_get_supremum_rec(page))
+			break;
+
+		rec = page_rec_get_next(rec);
+	}
+
+	/*释放掉所有page上的锁等待*/
+	lock_rec_free_all_from_discard_page(page);
+}
+
+/*记录添加时的行锁继承*/
+void lock_update_insert(rec_t* rec)
+{
+	lock_mutex_enter_kernel();
+
+	lock_rec_inherit_to_gap(rec, page_rec_get_next(rec));
+
+	lock_mutex_exit_kernel();
+}
+
+/*记录删除时的行锁转移*/
+void lock_update_delete(rec_t* rec)
+{
+	lock_mutex_enter_kernel();
+
+	lock_rec_inherit_to_gap(page_rec_get_next(rec), rec);
+	lock_rec_reset_and_release_wait(rec);
+
+	lock_mutex_exit_kernel();
+}
+
+/*将page的infimum记录行锁转移到rec记录上*/
+void lock_rec_restore_from_page_infimum(rec_t* rec, page_t* page)
+{
+	lock_mutex_enter_kernel();
+
+	lock_rec_move(rec, page_get_infimum_rec(page));
+
+	lock_mutex_exit_kernel();
+}
+
 /************************************************************************/
 
 
