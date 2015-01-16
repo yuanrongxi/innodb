@@ -23,7 +23,7 @@ UNIV_INLINE ulint lock_rec_hash(ulint space, ulint page_no)
 	return hash_calc_hash(lock_rec_fold(space, page_no), lock_sys->rec_hash);
 }
 
-/*获得记录x-lock对应的事务对象*/
+/*获得记录行x-lock对应的事务对象*/
 UNIV_INLINE trx_t* lock_clust_rec_some_has_impl(rec_t* rec, dict_index_t* index)
 {
 	dulint	trx_id;

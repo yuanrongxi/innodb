@@ -48,7 +48,7 @@ char* lock_latest_err_buf;
 
 
 static ibool		lock_deadlock_occurs(lock_t* lock, trx_t* trx);
-static ibool		lock_deadlock_recursive(trx_t* start, trx_t* trx, lock_t* wait_lock, ulint cost);
+static ibool		lock_deadlock_recursive(trx_t* start, trx_t* trx, lock_t* wait_lock, ulint* cost);
 
 /************************************************************************/
 /*kernel_mutex是在srv0srv.h定义的全局内核锁*/
@@ -1342,6 +1342,1186 @@ void lock_rec_restore_from_page_infimum(rec_t* rec, page_t* page)
 	lock_rec_move(rec, page_get_infimum_rec(page));
 
 	lock_mutex_exit_kernel();
+}
+
+/*检查一个锁请求是否会造成事务死锁*/
+static ibool lock_deadlock_occurs(lock_t* lock, trx_t* trx)
+{
+	dict_table_t*	table;
+	dict_index_t*	index;
+	trx_t*		mark_trx;
+	ibool		ret;
+	ulint		cost	= 0;
+	char*		err_buf;
+
+	ut_ad(trx && lock);
+	ut_ad(mutex_own(&kernel_mutex));
+
+	/*初始化所有事务的deadlock_mark*/
+	mark_trx = UT_LIST_GET_FIRST(trx_list, mark_trx);
+	while(mark_trx){
+		mark_trx->deadlock_mark = 0;
+		mark_trx = UT_LIST_GET_NEXT(trx_list, mark_trx);
+	}
+	/*对死锁进行检测*/
+	ret = lock_deadlock_recursive(trx, trx, lock, &cost);
+	if(ret){ /*构建死锁信息*/
+		if(lock_get_type(lock) == LOCK_TABLE){
+			table = lock->un_member.tab_lock.table;
+			index = NULL;
+		}
+		else{
+			index = lock->index;
+			table = index->table;
+		}
+
+		lock_deadlock_found = TRUE;
+
+		err_buf = lock_latest_err_buf + sizeof(lock_latest_err_buf);
+		err_buf += sprintf(err_buf, "*** (2) WAITING FOR THIS LOCK TO BE GRANTED:\n");
+		ut_a(err_buf <= lock_latest_err_buf + 4000);
+
+		if(lock_get_type(lock) == LOCK_REC){
+			lock_rec_print(err_buf, lock);
+			err_buf += strlen(err_buf);
+		}
+		else{
+			lock_table_print(err_buf, lock);
+			err_buf += strlen(err_buf);
+		}
+
+		ut_a(err_buf <= lock_latest_err_buf + 4000);
+		err_buf += sprintf(err_buf, "*** WE ROLL BACK TRANSACTION (2)\n");
+		ut_a(strlen(lock_latest_err_buf) < 4100);
+	}
+
+	return ret;
+}
+
+static ibool lock_deadlock_recursive(trx_t* start, trx_t* trx, lock_t* wait_lock, ulint* cost)
+{
+	lock_t*	lock;
+	ulint	bit_no;
+	trx_t*	lock_trx;
+	char*	err_buf;
+
+	ut_a(trx && start && wait_lock);
+	ut_ad(mutex_own(&kernel_mutex));
+
+	if(trx->deadlock_mark == 1)
+		return TRUE;
+
+	*cost = *cost + 1;
+	if(*cost > LOCK_MAX_N_STEPS_IN_DEADLOCK_CHECK)
+		return TRUE;
+
+	lock = wait_lock;
+	if(lock_get_type(wait_lock) == LOCK_REC){
+		bit_no = lock_rec_find_set_bit(wait_lock);
+		ut_a(bit_no != ULINT_UNDEFINED);
+	}
+
+	for(;;){
+		if(lock_get_type(lock) == LOCK_TABLE){ /*查找上一个表锁*/
+			lock = UT_LIST_GET_PREV(un_member.tab_lock.locks, lock);
+		}
+		else{ /*查找记录行的上一个行锁*/
+			ut_ad(lock_get_type(lock) == LOCK_REC);
+			lock = lock_rec_get_prev(lock, bit_no);
+		}
+
+		if(lock == NULL){
+			trx->deadlock_mark = 1;
+			return FALSE;
+		}
+
+		if(lock_has_to_wait(wait_lock, lock)){
+			lock_trx = lock->trx;
+
+			if(lock_trx == start){ /*已经构成死锁环*/
+				err_buf = lock_latest_err_buf;
+
+				ut_sprintf_timestamp(err_buf);
+				err_buf += strlen(err_buf);
+
+				err_buf += sprintf(err_buf,
+					"  LATEST DETECTED DEADLOCK:\n"
+					"*** (1) TRANSACTION:\n");
+
+				trx_print(err_buf, wait_lock->trx);
+				err_buf += strlen(err_buf);
+
+				err_buf += sprintf(err_buf,
+					"*** (1) WAITING FOR THIS LOCK TO BE GRANTED:\n");
+
+				ut_a(err_buf <= lock_latest_err_buf + 4000);
+
+				if (lock_get_type(wait_lock) == LOCK_REC) {
+					lock_rec_print(err_buf, wait_lock);
+					err_buf += strlen(err_buf);
+				} else {
+					lock_table_print(err_buf, wait_lock);
+					err_buf += strlen(err_buf);
+				}
+
+				ut_a(err_buf <= lock_latest_err_buf + 4000);
+				err_buf += sprintf(err_buf,
+					"*** (2) TRANSACTION:\n");
+
+				trx_print(err_buf, lock->trx);
+				err_buf += strlen(err_buf);
+
+				err_buf += sprintf(err_buf,
+					"*** (2) HOLDS THE LOCK(S):\n");
+
+				ut_a(err_buf <= lock_latest_err_buf + 4000);
+
+				if (lock_get_type(lock) == LOCK_REC) {
+					lock_rec_print(err_buf, lock);
+					err_buf += strlen(err_buf);
+				} else {
+					lock_table_print(err_buf, lock);
+					err_buf += strlen(err_buf);
+				}
+
+				ut_a(err_buf <= lock_latest_err_buf + 4000);
+
+				if (lock_print_waits) {
+					printf("Deadlock detected\n");
+				}
+
+				return(TRUE);
+			}
+
+			/*如果是lock_trx等待状态，进行递归判断*/
+			if(lock_trx->que_state == TRX_QUE_LOCK_WAIT){
+				if(lock_deadlock_recursive(start, lock_trx, lock_trx->wait_lock, cost))
+					return TRUE;
+			}
+		}
+	}
+}
+
+UNIV_INLINE lock_t* lock_table_create(dict_table_t* table, ulint type_mode, trx_t* trx)
+{
+	lock_t*	lock;
+
+	ut_ad(table && trx);
+	ut_ad(mutex_own(&kernel_mutex));
+
+	if(type_mode == LOCK_AUTO_INC){ /*直接将表的自增锁返回*/
+		lock = table->auto_inc_lock;
+		ut_a(trx->auto_inc_lock);
+		trx->auto_inc_lock = lock;
+	}
+	else /*在trx事务的分配heap分配一个lock*/
+		lock = mem_heap_alloc(trx->lock_heap, sizeof(lock_t));
+
+	if(lock == NULL)
+		return NULL;
+
+	/*加入到事务的锁列表中*/
+	UT_LIST_ADD_LAST(trx_locks, trx->trx_locks, lock);
+	
+	lock->type_mode = type_mode | LOCK_TABLE;
+	lock->trx = trx;
+
+	lock->un_member.tab_lock.table = table;
+	UT_LIST_ADD_LAST(un_member.tab_lock.locks, table->locks, lock);
+
+	if(type_mode & LOCK_WAIT)
+		lock_set_lock_and_trx_wait(lock, trx);
+
+	/*todo:表锁是不会放入全局的lock_sys当中*/
+	return lock;
+}
+
+/*移除table_lock*/
+UNIV_INLINE void lock_table_remove_low(lock_t* lock)
+{
+	dict_table_t*	table;
+	trx_t*			trx;
+
+	ut_ad(mutex_own(&kernel_mutex));
+
+	table = lock->un_member.table_lock.table;
+	trx = lock->trx;
+
+	/*自增长锁*/
+	if(lock == trx->auto_inc_lock)
+		trx->auto_inc_lock = NULL;
+
+	/*从trx事务移除lock*/
+	UT_LIST_REMOVE(trx_locks, trx->trx_locks, lock);
+	/*从table中移除locks*/
+	UT_LIST_REMOVE(un_member.tab_lock.locks, table->locks, lock);
+}
+
+ulint lock_table_enqueue_waiting(ulint mode, dict_table_t* table, que_thr_t* thr)
+{
+	lock_t*	lock;
+	trx_t*	trx;
+
+	ut_ad(mutex_own(&kernel_mutex));
+
+	if(que_thr_stop(thr)){
+		ut_a(0);
+		return DB_QUE_THR_SUSPENDED;
+	}
+
+	/*获得thr正在执行的事务*/
+	trx = thr_get_trx(thr);
+	if(trx->dict_operation){
+		ut_print_timestamp(stderr);
+		fprintf(stderr, "  InnoDB: Error: a table lock wait happens in a dictionary operation!\n"
+			"InnoDB: Table name %s. Send a bug report to mysql@lists.mysql.com\n", table->name);
+	}
+
+	/*建立一个表锁*/
+	lock = lock_table_create(table, mode | LOCK_WAIT, trx);
+	if(lock_deadlock_occurs(lock, trx)){ /*死锁了！！*/
+		lock_reset_lock_and_trx_wait(lock);
+		lock_table_remove_low(lock);
+
+		return(DB_DEADLOCK);
+	}
+
+	trx->que_state = TRX_QUE_LOCK_WAIT;
+	trx->wait_started = time(NULL);
+
+	ut_a(que_thr_stop(thr));
+
+	return DB_LOCK_WAIT;
+}
+
+/*检查表持有的表锁是否和mode模式兼容？*/
+UNIV_INLINE ibool lock_table_other_has_incompatible(trx_t* trx, ulint wait, dict_table_t* table, ulint mode)
+{
+	lock_t* lock;
+
+	ut_ad(mutex_own(&kernel_mutex));
+
+	lock = UT_LIST_GET_LAST(table->locks);
+	while(lock != NULL){
+		if(lock->trx == trx && (!lock_mode_compatible(lock_get_mode(lock), mode))
+			&& (wait || !lock_get_wait(lock)))
+			return TRUE;
+
+		lock = UT_LIST_GET_PREV(un_member.tab_lock.locks, lock);
+	}
+
+	return FALSE;
+}
+
+ulint lock_table(ulint flags, dict_table_t* table, ulint mode, que_thr_t* thr)
+{
+	trx_t*	trx;
+	ulint	err;
+
+	ut_ad(table && thr);
+
+	if(flags & BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
+
+	trx = thr_get_trx(thr);
+
+	lock_mutex_enter_kernel();
+
+	/*判断是否有更严的锁*/
+	if(lock_table_has(trx, table, mode)){
+		lock_mutex_exit_kernel();
+		return DB_SUCCESS;
+	}
+
+	/*检查锁是否排斥*/
+	if(lock_table_other_has_incompatible(trx, LOCK_WAIT, table, mode)){ /*锁排斥，必须进行排队*/
+		err = lock_table_enqueue_waiting(mode, table, thr);
+		lock_mutex_exit_kernel();
+
+		return err;
+	}
+	/*进行锁创建并LOCK_WAIT*/
+	lock_table_create(table, mode, trx);
+
+	lock_mutex_exit_kernel();
+
+	return DB_SUCCESS;
+}
+/*判断table是有表锁*/
+ibool lock_is_on_table(dict_table_t* table)
+{
+	ibool	ret;
+
+	ut_ad(table);
+
+	lock_mutex_enter_kernel();
+	
+	if(UT_LIST_GET_LAST(table->locks))
+		ret = TRUE;
+	else
+		ret = FALSE;
+
+	lock_mutex_exit_kernel();
+
+	return ret;
+}
+
+/*判断wait_lock是否需要在队列中等待锁权*/
+static ibool lock_table_has_to_wait_in_queue(lock_t* wait_lock)
+{
+	dict_table_t*	table;
+	lock_t*			lock;
+
+	ut_ad(lock_get_wait(wait_lock));
+
+	table = wait_lock->un_member.tab_lock.table;
+
+	lock = UT_LIST_GET_FIRST(table->locks);
+	while(lock != wait_lock){
+		if(lock_has_to_wait(wait_lock, lock))
+			return TRUE;
+
+		lock = UT_LIST_GET_NEXT(un_member.tab_lock.locks, lock);
+	}
+
+	return TRUE;
+}
+
+/*对in_lock进行移除，并激活可以激活的所有的表锁事务*/
+void lock_table_dequeue(lock_t* in_lock)
+{
+	lock_t* lock;
+
+	ut_ad(mutex_own(&kernel_mutex));
+	ut_ad(lock_get_type(in_lock) == LOCK_TABLE);
+
+	/*获得in_lock下一个表锁句柄*/
+	lock = UT_LIST_GET_NEXT(un_member.tab_lock.locks, in_lock);
+	/*移除in_lock*/
+	lock_table_remove_low(in_lock);
+	/*激活所有可以激活的锁的事务*/
+	while(lock != NULL){
+		if(lock_get_wait(lock) && !lock_table_has_to_wait_in_queue(lock))
+			lock_grant(lock);
+
+		lock = UT_LIST_GET_NEXT(un_member.tab_lock.locks, lock);
+	}
+}
+
+/*释放一个自增长锁*/
+void lock_table_unlock_auto_inc(trx_t* trx)
+{
+	if(trx->auto_inc_lock){
+		mutex_enter(&kernel_mutex);
+
+		lock_table_dequeue(trx->auto_inc_lock)
+
+		mutex_exit(&kernel_mutex);
+	}
+}
+
+/*释放trx事务的所有锁请求,一般在事务回滚的时候调用*/
+void lock_release_off_kernel(trx_id* trx)
+{
+	ulint	count;
+	lock_t*	lock;
+
+	ut_ad(mutex_own(&kernel_mutex));
+
+	lock = UT_LIST_GET_LAST(trx->trx_locks);
+	count = 0;
+	while(lock != NULL){
+		count ++;
+
+		/*激活下一个记录行或者表锁*/
+		if(lock_get_type(lock) == LOCK_REC)
+			lock_rec_dequeue_from_page(lock);
+		else{
+			ut_ad(lock_get_type(lock) == LOCK_TABLE);
+			lock_table_dequeue(lock);
+		}
+
+		/*释放一次kernel latch,以便其他线程进行并发，防止lock_release_off_kernel函数长时间堵塞*/
+		if(count == LOCK_RELEASE_KERNEL_INTERVAL){
+			lock_mutex_exit_kernel();
+			lock_mutex_enter_kernel();
+			count = 0;
+		}
+
+		lock = UT_LIST_GET_LAST(trx->trx_locks);
+	}
+
+	/*释放事务对应的lock分配堆*/
+	mem_heap_empty(trx->lock_heap);
+
+	ut_a(trx->auto_inc_lock == NULL);
+}
+
+/*取消lock，并激活下一个对应的lock*/
+void lock_cancel_waiting_and_release(lock_t* lock)
+{
+	ut_ad(mutex_own(&kernel_mutex));
+
+	/*激活等待本锁的事务*/
+	if(lock_get_type(lock) == LOCK_REC)
+		lock_rec_dequeue_from_page(lock);
+	else{
+		ut_ad(lock_get_type(lock) == LOCK_TABLE);
+		lock_table_dequeue(lock);
+	}
+
+	/*取消lock的等待位*/
+	lock_reset_lock_and_trx_wait(lock);
+	/*lock的事务继续执行*/
+	trx_end_lock_wait(lock->trx);
+}
+
+/*复位事务trx所有的锁，主要是从等待队列中删除*/
+static void lock_reset_all_on_table_for_trx(dict_table_t* table, trx_t* trx)
+{
+	lock_t*	lock;
+	lock_t*	prev_lock;
+
+	ut_ad(mutex_own(&kernel_mutex));
+
+	lock = UT_LIST_GET_LAST(trx->trx_locks);
+	while(lock != NULL){
+		prev_lock = UT_LIST_GET_PREV(trx_locks, lock);
+
+		if(lock_get_type(lock) == LOCK_REC && lock->index->table == table){
+			ut_a(!lock_get_wait(lock));
+			lock_rec_discard(lock);
+		}
+		else if(lock_get_type(lock) == LOCK_TABLE && lock->un_member.tab_lock.table == table){
+			ut_a(!lock_get_wait(lock));
+			lock_table_remove_low(lock);
+		}
+
+		lock = prev_lock;
+	}
+}
+
+/*复位table的表锁请求*/
+void lock_reset_all_on_table(dict_table_t* table)
+{
+	lock_t* lock;
+
+	mutex_enter(&kernel_mutex);
+
+	lock = UT_LIST_GET_FIRST(table->locks);
+
+	while(lock){
+		ut_a(!lock_get_wait(lock));
+
+		/*复位lock->trx的表锁请求*/
+		lock_reset_all_on_table_for_trx(table, lock->trx);
+
+		lock = UT_LIST_GET_FIRST(table->locks);
+	}
+
+	mutex_exit(&kernel_mutex);
+}
+
+/**********************VALIDATION AND DEBUGGING *************************/
+void
+lock_table_print(char* buf, lock_t* lock)
+{
+	ut_ad(mutex_own(&kernel_mutex));
+	ut_a(lock_get_type(lock) == LOCK_TABLE);
+
+	buf += sprintf(buf, "TABLE LOCK table %s trx id %lu %lu",
+		lock->un_member.tab_lock.table->name, (lock->trx)->id.high, (lock->trx)->id.low);
+
+	if (lock_get_mode(lock) == LOCK_S)
+		buf += sprintf(buf, " lock mode S");
+	else if (lock_get_mode(lock) == LOCK_X)
+		buf += sprintf(buf, " lock_mode X");
+	else if (lock_get_mode(lock) == LOCK_IS)
+		buf += sprintf(buf, " lock_mode IS");
+	else if (lock_get_mode(lock) == LOCK_IX)
+		buf += sprintf(buf, " lock_mode IX");
+	else if (lock_get_mode(lock) == LOCK_AUTO_INC)
+		buf += sprintf(buf, " lock_mode AUTO-INC");
+	else
+		buf += sprintf(buf," unknown lock_mode %lu", lock_get_mode(lock));
+
+	if (lock_get_wait(lock))
+		buf += sprintf(buf, " waiting");
+
+	buf += sprintf(buf, "\n");
+}
+
+void
+lock_rec_print(char* buf,lock_t* lock)
+{
+	page_t*	page;
+	ulint	space;
+	ulint	page_no;
+	ulint	i;
+	ulint	count	= 0;
+	char*	buf_start	= buf;
+	mtr_t	mtr;
+
+	ut_ad(mutex_own(&kernel_mutex));
+	ut_a(lock_get_type(lock) == LOCK_REC);
+
+	space = lock->un_member.rec_lock.space;
+ 	page_no = lock->un_member.rec_lock.page_no;
+
+	buf += sprintf(buf, "RECORD LOCKS space id %lu page no %lu n bits %lu",
+		    space, page_no, lock_rec_get_n_bits(lock));
+
+	buf += sprintf(buf, " table %s index %s trx id %lu %lu",
+		lock->index->table->name, lock->index->name,
+		(lock->trx)->id.high, (lock->trx)->id.low);
+
+	if (lock_get_mode(lock) == LOCK_S) {
+		buf += sprintf(buf, " lock mode S");
+	} else if (lock_get_mode(lock) == LOCK_X) {
+		buf += sprintf(buf, " lock_mode X");
+	} else {
+		ut_error;
+	}
+
+	if (lock_rec_get_gap(lock)) {
+		buf += sprintf(buf, " gap type lock");
+	}
+
+	if (lock_get_wait(lock)) {
+		buf += sprintf(buf, " waiting");
+	}
+
+	mtr_start(&mtr);
+
+	buf += sprintf(buf, "\n");
+
+	/* If the page is not in the buffer pool, we cannot load it
+	because we have the kernel mutex and ibuf operations would
+	break the latching order */
+	
+	page = buf_page_get_gen(space, page_no, RW_NO_LATCH, NULL, BUF_GET_IF_IN_POOL, IB__FILE__, __LINE__, &mtr);
+	if (page) {
+		page = buf_page_get_nowait(space, page_no, RW_S_LATCH, &mtr);
+	}
+				
+	if (page) {
+		buf_page_dbg_add_level(page, SYNC_NO_ORDER_CHECK);
+	}
+
+	for (i = 0; i < lock_rec_get_n_bits(lock); i++) {
+		if (buf - buf_start > 300) {
+			buf += sprintf(buf,"Suppressing further record lock prints for this page\n");
+			mtr_commit(&mtr);
+
+			return;
+		}
+	
+		if (lock_rec_get_nth_bit(lock, i)) {
+			buf += sprintf(buf, "Record lock, heap no %lu ", i);
+
+			if (page) {
+				buf += rec_sprintf(buf, 120, page_find_rec_with_heap_no(page, i));
+				*buf = '\0';
+			}
+
+			buf += sprintf(buf, "\n");
+			count++;
+		}
+	}
+
+	mtr_commit(&mtr);
+}
+
+/*统计记录锁的个数*/
+static ulint lock_get_n_rec_locks()
+{
+	lock_t*	lock;
+	ulint n_locks = 0;
+	ulint i;
+
+	ut_ad(mutex_own(&kernel_mutex));
+
+	for(i = 0; i < hash_get_n_cells(lock_sys->rec_hash); i ++){
+		lock = HASH_GET_FIRST(lock_sys->rec_hash, i);
+		while(lock){
+			n_locks ++;
+			lock = HASH_GET_NEXT(hash, lock);
+		}
+	}
+
+	return n_locks;
+}
+
+void lock_print_info(char*	buf, char*	buf_end)
+{
+	lock_t*	lock;
+	trx_t*	trx;
+	ulint	space;
+	ulint	page_no;
+	page_t*	page;
+	ibool	load_page_first = TRUE;
+	ulint	nth_trx		= 0;
+	ulint	nth_lock	= 0;
+	ulint	i;
+	mtr_t	mtr;
+
+	if (buf_end - buf < 600) {
+		sprintf(buf, "... output truncated!\n");
+		return;
+	}
+
+	buf += sprintf(buf, "Trx id counter %lu %lu\n", 
+		ut_dulint_get_high(trx_sys->max_trx_id),
+		ut_dulint_get_low(trx_sys->max_trx_id));
+
+	buf += sprintf(buf,
+	"Purge done for trx's n:o < %lu %lu undo n:o < %lu %lu\n",
+		ut_dulint_get_high(purge_sys->purge_trx_no),
+		ut_dulint_get_low(purge_sys->purge_trx_no),
+		ut_dulint_get_high(purge_sys->purge_undo_no),
+		ut_dulint_get_low(purge_sys->purge_undo_no));
+	
+	lock_mutex_enter_kernel();
+
+	buf += sprintf(buf,"Total number of lock structs in row lock hash table %lu\n", lock_get_n_rec_locks());
+	if (lock_deadlock_found) {
+
+		if ((ulint)(buf_end - buf)
+			< 100 + strlen(lock_latest_err_buf)) {
+
+			lock_mutex_exit_kernel();
+			sprintf(buf, "... output truncated!\n");
+
+			return;
+		}
+
+		buf += sprintf(buf, "%s", lock_latest_err_buf);
+	}
+
+	if (buf_end - buf < 600) {
+		lock_mutex_exit_kernel();
+		sprintf(buf, "... output truncated!\n");
+
+		return;
+	}
+
+	buf += sprintf(buf, "LIST OF TRANSACTIONS FOR EACH SESSION:\n");
+
+	/* First print info on non-active transactions */
+
+	trx = UT_LIST_GET_FIRST(trx_sys->mysql_trx_list);
+
+	while (trx) {
+		if (buf_end - buf < 900) {
+			lock_mutex_exit_kernel();
+			sprintf(buf, "... output truncated!\n");
+
+			return;
+		}
+
+		if (trx->conc_state == TRX_NOT_STARTED) {
+		    buf += sprintf(buf, "---");
+			trx_print(buf, trx);
+
+			buf += strlen(buf);
+		}
+			
+		trx = UT_LIST_GET_NEXT(mysql_trx_list, trx);
+	}
+
+loop:
+	trx = UT_LIST_GET_FIRST(trx_sys->trx_list);
+
+	i = 0;
+
+	/* Since we temporarily release the kernel mutex when
+	reading a database page in below, variable trx may be
+	obsolete now and we must loop through the trx list to
+	get probably the same trx, or some other trx. */
+	
+	while (trx && (i < nth_trx)) {
+		trx = UT_LIST_GET_NEXT(trx_list, trx);
+		i++;
+	}
+
+	if (trx == NULL) {
+		lock_mutex_exit_kernel();
+		return;
+	}
+
+	if (buf_end - buf < 900) {
+		lock_mutex_exit_kernel();
+		sprintf(buf, "... output truncated!\n");
+
+		return;
+	}
+
+	if (nth_lock == 0) {
+	        buf += sprintf(buf, "---");
+		trx_print(buf, trx);
+
+		buf += strlen(buf);
+		
+		if (buf_end - buf < 500) {
+			lock_mutex_exit_kernel();
+			sprintf(buf, "... output truncated!\n");
+
+			return;
+		}
+		
+	        if (trx->read_view) {
+	  	        buf += sprintf(buf,
+       "Trx read view will not see trx with id >= %lu %lu, sees < %lu %lu\n",
+		       	ut_dulint_get_high(trx->read_view->low_limit_id),
+       			ut_dulint_get_low(trx->read_view->low_limit_id),
+       			ut_dulint_get_high(trx->read_view->up_limit_id),
+       			ut_dulint_get_low(trx->read_view->up_limit_id));
+	        }
+
+		if (trx->que_state == TRX_QUE_LOCK_WAIT) {
+			buf += sprintf(buf,
+ "------- TRX HAS BEEN WAITING %lu SEC FOR THIS LOCK TO BE GRANTED:\n",
+		   (ulint)difftime(time(NULL), trx->wait_started));
+
+			if (lock_get_type(trx->wait_lock) == LOCK_REC) {
+				lock_rec_print(buf, trx->wait_lock);
+			} else {
+				lock_table_print(buf, trx->wait_lock);
+			}
+
+			buf += strlen(buf);
+			buf += sprintf(buf,
+			"------------------\n");
+		}
+	}
+
+	if (!srv_print_innodb_lock_monitor) {
+	  	nth_trx++;
+	  	goto loop;
+	}
+
+	i = 0;
+
+	/* Look at the note about the trx loop above why we loop here:
+	lock may be an obsolete pointer now. */
+	
+	lock = UT_LIST_GET_FIRST(trx->trx_locks);
+		
+	while (lock && (i < nth_lock)) {
+		lock = UT_LIST_GET_NEXT(trx_locks, lock);
+		i++;
+	}
+
+	if (lock == NULL) {
+		nth_trx++;
+		nth_lock = 0;
+
+		goto loop;
+	}
+
+	if (buf_end - buf < 500) {
+		lock_mutex_exit_kernel();
+		sprintf(buf, "... output truncated!\n");
+
+		return;
+	}
+
+	if (lock_get_type(lock) == LOCK_REC) {
+		space = lock->un_member.rec_lock.space;
+ 		page_no = lock->un_member.rec_lock.page_no;
+
+ 		if (load_page_first) {
+			lock_mutex_exit_kernel();
+
+			mtr_start(&mtr);
+			
+			page = buf_page_get_with_no_latch(space, page_no, &mtr);
+
+			mtr_commit(&mtr);
+
+			load_page_first = FALSE;
+
+			lock_mutex_enter_kernel();
+
+			goto loop;
+		}
+		
+		lock_rec_print(buf, lock);
+	} else {
+		ut_ad(lock_get_type(lock) == LOCK_TABLE);
+		lock_table_print(buf, lock);
+	}
+
+	buf += strlen(buf);
+	
+	load_page_first = TRUE;
+
+	nth_lock++;
+
+	if (nth_lock >= 10) {
+		buf += sprintf(buf, "10 LOCKS PRINTED FOR THIS TRX: SUPPRESSING FURTHER PRINTS\n");
+	
+		nth_trx++;
+		nth_lock = 0;
+
+		goto loop;
+	}
+
+	goto loop;
+}
+
+/*判断一个表锁的合法性*/
+ibool lock_table_queue_validate(dict_table_t* table)
+{
+	lock_t*	lock;
+	ibool	is_waiting;
+
+	ut_ad(mutex_own(&kernel_mutex));
+
+	is_waiting = FALSE;
+
+	lock = UT_LIST_GET_FIRST(table->locks);
+
+	while (lock) {
+		ut_a(((lock->trx)->conc_state == TRX_ACTIVE) || ((lock->trx)->conc_state == TRX_COMMITTED_IN_MEMORY));
+
+		if (!lock_get_wait(lock)) { /*如果锁获得执行权*/
+			ut_a(!is_waiting);
+			ut_a(!lock_table_other_has_incompatible(lock->trx, 0, table, lock_get_mode(lock)));
+		} else {
+			is_waiting = TRUE;
+			ut_a(lock_table_has_to_wait_in_queue(lock));
+		}
+
+		lock = UT_LIST_GET_NEXT(un_member.tab_lock.locks, lock);
+	}
+
+	return(TRUE);
+}
+
+ibool lock_rec_queue_validate(rec_t* rec, dict_index_t* index)	
+{
+	trx_t*	impl_trx;	
+	lock_t*	lock;
+	ibool	is_waiting;
+	
+	ut_a(rec);
+
+	lock_mutex_enter_kernel();
+
+	/*supremum/infimum的行锁判断*/
+	if (page_rec_is_supremum(rec) || page_rec_is_infimum(rec)) {
+		lock = lock_rec_get_first(rec);
+
+		while (lock) {
+			ut_a(lock->trx->conc_state == TRX_ACTIVE || lock->trx->conc_state == TRX_COMMITTED_IN_MEMORY);
+			ut_a(trx_in_trx_list(lock->trx));
+			
+			/*锁处于LOCK_WAIT状态下，必须在等待队列中*/
+			if (lock_get_wait(lock))
+				ut_a(lock_rec_has_to_wait_in_queue(lock));
+
+			/*lock的index必须是index*/
+			if (index)
+				ut_a(lock->index == index);
+
+			lock = lock_rec_get_next(rec, lock);
+		}
+
+		lock_mutex_exit_kernel();
+
+	    return(TRUE);
+	}
+
+	if (index && (index->type & DICT_CLUSTERED)) {
+		impl_trx = lock_clust_rec_some_has_impl(rec, index);
+
+		if (impl_trx && lock_rec_other_has_expl_req(LOCK_S, 0, LOCK_WAIT, rec, impl_trx))
+			ut_a(lock_rec_has_expl(LOCK_X, rec, impl_trx));
+	}
+
+	if (index && !(index->type & DICT_CLUSTERED)) {
+		
+		/* The kernel mutex may get released temporarily in the
+		next function call: we have to release lock table mutex
+		to obey the latching order */
+		
+		impl_trx = lock_sec_rec_some_has_impl_off_kernel(rec, index);
+
+		if (impl_trx && lock_rec_other_has_expl_req(LOCK_S, 0,
+						LOCK_WAIT, rec, impl_trx)) {
+
+			ut_a(lock_rec_has_expl(LOCK_X, rec, impl_trx));
+		}
+	}
+
+	is_waiting = FALSE;
+
+	lock = lock_rec_get_first(rec);
+
+	while (lock) {
+		ut_a(lock->trx->conc_state == TRX_ACTIVE
+		     || lock->trx->conc_state == TRX_COMMITTED_IN_MEMORY);
+		ut_a(trx_in_trx_list(lock->trx));
+	
+		if (index) {
+			ut_a(lock->index == index);
+		}
+
+		if (!lock_rec_get_gap(lock) && !lock_get_wait(lock)) {
+
+			ut_a(!is_waiting);
+		
+			if (lock_get_mode(lock) == LOCK_S) {
+				ut_a(!lock_rec_other_has_expl_req(LOCK_X,0, 0, rec, lock->trx));
+			} else {
+				ut_a(!lock_rec_other_has_expl_req(LOCK_S,0, 0, rec, lock->trx));
+			}
+
+		} else if (lock_get_wait(lock) && !lock_rec_get_gap(lock)) {
+			is_waiting = TRUE;
+			ut_a(lock_rec_has_to_wait_in_queue(lock));
+		}
+
+		lock = lock_rec_get_next(rec, lock);
+	}
+
+	lock_mutex_exit_kernel();
+
+	return(TRUE);
+}
+
+ibool lock_rec_validate_page(ulint space, ulint	page_no)
+{
+	dict_index_t*	index;
+	page_t*	page;
+	lock_t*	lock;
+	rec_t*	rec;
+	ulint	nth_lock	= 0;
+	ulint	nth_bit		= 0;
+	ulint	i;
+	mtr_t	mtr;
+
+	ut_ad(!mutex_own(&kernel_mutex));
+
+	mtr_start(&mtr);
+
+	page = buf_page_get(space, page_no, RW_X_LATCH, &mtr);
+	buf_page_dbg_add_level(page, SYNC_NO_ORDER_CHECK);
+
+	lock_mutex_enter_kernel();
+
+loop:	
+	lock = lock_rec_get_first_on_page_addr(space, page_no);
+	if (lock == NULL)
+		goto function_exit;
+
+	for (i = 0; i < nth_lock; i++) {
+		lock = lock_rec_get_next_on_page(lock);
+
+		if (!lock) 
+			goto function_exit;
+	}
+
+	ut_a(trx_in_trx_list(lock->trx));
+	ut_a(lock->trx->conc_state == TRX_ACTIVE
+		|| lock->trx->conc_state == TRX_COMMITTED_IN_MEMORY);
+
+	for (i = nth_bit; i < lock_rec_get_n_bits(lock); i++) {
+		if (i == 1 || lock_rec_get_nth_bit(lock, i)) {
+
+			index = lock->index;
+			rec = page_find_rec_with_heap_no(page, i);
+
+			printf("Validating %lu %lu\n", space, page_no);
+
+			lock_mutex_exit_kernel();
+
+			lock_rec_queue_validate(rec, index);
+
+			lock_mutex_enter_kernel();
+
+			nth_bit = i + 1;
+
+			goto loop;
+		}
+	}
+
+	nth_bit = 0;
+	nth_lock++;
+
+	goto loop;
+
+function_exit:
+	lock_mutex_exit_kernel();
+	mtr_commit(&mtr);
+
+	return(TRUE);
+}
+
+/*对事务锁的整体校验*/
+ibool lock_validate(void)
+{
+	lock_t*	lock;
+	trx_t*	trx;
+	dulint	limit;
+	ulint	space;
+	ulint	page_no;
+	ulint	i;
+
+	lock_mutex_enter_kernel();
+
+	trx = UT_LIST_GET_FIRST(trx_sys->trx_list);
+
+	while (trx) {
+		lock = UT_LIST_GET_FIRST(trx->trx_locks);
+
+		while (lock) {
+			if (lock_get_type(lock) == LOCK_TABLE)
+				lock_table_queue_validate(lock->un_member.tab_lock.table);
+
+			lock = UT_LIST_GET_NEXT(trx_locks, lock);
+		}
+
+		trx = UT_LIST_GET_NEXT(trx_list, trx);
+	}
+
+	for (i = 0; i < hash_get_n_cells(lock_sys->rec_hash); i++) {
+
+		limit = ut_dulint_zero;
+
+		for (;;) {
+			lock = HASH_GET_FIRST(lock_sys->rec_hash, i);
+
+			while (lock) {
+				ut_a(trx_in_trx_list(lock->trx));
+
+				space = lock->un_member.rec_lock.space;
+				page_no = lock->un_member.rec_lock.page_no;
+
+				if (ut_dulint_cmp(ut_dulint_create(space, page_no),limit) >= 0) {
+					break;
+				}
+
+				lock = HASH_GET_NEXT(hash, lock);
+			}
+
+			if (!lock) {
+				break;
+			}
+
+			lock_mutex_exit_kernel();
+
+			lock_rec_validate_page(space, page_no);
+
+			lock_mutex_enter_kernel();
+
+			limit = ut_dulint_create(space, page_no + 1);
+		}
+	}
+
+	lock_mutex_exit_kernel();
+
+	return(TRUE);
+}
+
+ulint lock_rec_insert_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, que_thr_t* thr, ibool inherit)
+{
+	rec_t*	next_rec;
+	trx_t*	trx;
+	lock_t*	lock;
+	ulint	err;
+
+	if(flags && BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
+
+	ut_ad(rec);
+
+	trx = thr_get_trx(thr);
+	next_rec = page_rec_get_next(rec);
+
+	*thr_get_trx = FALSE;
+
+	lock_mutex_enter_kernel();
+
+	ut_ad(lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
+
+	lock = lock_rec_get_first(next_rec);
+	if(lock == NULL){ /*行记录可以操作*/
+		lock_mutex_exit_kernel();
+		
+		/*更新page最后执行的事务ID*/
+		if(!(index->type) & DICT_CLUSTERED)
+			page_update_max_trx_id(buf_frame_align(rec), thr_get_trx(thr)->id);
+
+		return DB_SUCCESS;
+	}
+
+	*inherit = TRUE;
+
+	/*next_rec上有比LOCK_S更严格的行锁，并且不是trx发起的,insert操作必须插入一个LOCK_X来支持插入操作*/
+	if(lock_rec_other_has_expl_req(LOCK_S, LOCK_GAP, LOCK_WAIT, next_rec, trx))
+		err = lock_rec_enqueue_waiting(LOCK_X | LOCK_GAP, next_rec, index, thr); /*插入一个LOCK_X独占锁来进行操作*/
+	else
+		err = DB_SUCCESS;
+
+	lock_mutex_exit_kernel();
+
+	/*更新最近操作page的事务ID*/
+	if(!(index->type & DICT_CLUSTERED) && (err == DB_SUCCESS)){
+		page_update_max_trx_id(buf_frame_align(rec), thr_get_trx(thr)->id);
+	}
+
+	ut_ad(lock_rec_queue_validate(next_rec, index));
+
+	return err;
+}
+
+/*假如一个事务已经有一个LOCK_X在rec行上，不需要在rec上加LOCK_X锁，如果没有，加上一个LOCK_X*/
+static void lock_rec_convert_impl_to_expl(rec_t* rec, dict_index_t* index)
+{
+	trx_t*	impl_trx;
+
+	ut_ad(mutex_own(&kernel_mutex));
+	ut_ad(page_rec_is_user_rec(rec));
+
+	if(index->type & DICT_CLUSTERED)
+		impl_trx = lock_clust_rec_some_has_impl(rec, index);
+	else
+		impl_trx = lock_sec_rec_some_has_impl_off_kernel(rec, index);
+
+	if(impl_trx){
+		if(lock_rec_has_expl(LOCK_X, rec, impl_trx) == NULL) /*impl_trx没有一个rec记录行锁比LOCK_X更严格*/
+			lock_rec_add_to_queue(LOCK_REC | LOCK_X, rec, index, impl_trx); /*增加一个LOCK_X到这个行上*/
+	}
+}
+
+/*假如一个事务需要对记录REC进行修改，添加一个LOCK_X在rec行上，并尝试获得器LOCK_X锁的执行权*/
+ulint lock_clust_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, que_thr_t* thr)
+{
+	trx_t*	trx;
+	ulint	err;
+
+	if(flags & BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
+
+	ut_ad(index->type & DICT_CLUSTERED);
+
+	trx = thr_get_trx(thr);
+
+	lock_mutex_enter_kernel();
+	ut_ad(lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
+	/*在rec行上增加一个LOCK_X*/
+	lock_rec_convert_impl_to_expl(rec, index);
+
+	/*尝试获得thr对应执行事务对rec行锁的LOCK_X执行权*/
+	err = lock_rec_lock(TRUE, LOCK_X, rec, index, thr);
+
+	lock_mutex_exit_kernel();
+
+	ut_ad(lock_rec_queue_validate(rec, index));
+
+	return err;
 }
 
 /************************************************************************/

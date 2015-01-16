@@ -59,7 +59,7 @@ void					lock_rec_restore_from_page_infimum(rec_t* rec, page_t* page);
 
 ibool					lock_rec_expl_exist_on_page(ulint space, ulint page_no);
 
-ulint					lock_rec_insert_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, ibool inherit);
+ulint					lock_rec_insert_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, que_thr_t* thr, ibool inherit);
 
 ulint					lock_clust_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, que_thr_t* thr);
 
