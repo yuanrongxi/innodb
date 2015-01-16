@@ -2524,6 +2524,11 @@ ulint lock_clust_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t
 	return err;
 }
 
+ulint lock_sec_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, que_thr_t* thr)
+{
+
+}
+
 /************************************************************************/
 
 
