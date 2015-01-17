@@ -2524,9 +2524,82 @@ ulint lock_clust_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t
 	return err;
 }
 
+/*通过二级索引修改记录行，激活一个等待的LOCK_X锁，如果成功，设置PAGE的操作trx_id*/
 ulint lock_sec_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, que_thr_t* thr)
 {
+	if(flags & BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
 
+	ut_ad(!(index->type & DICT_CLUSTERED));
+
+	lock_mutex_enter_kernel();
+	
+	ut_ad(lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
+	/*在rec行上激活一个lock_x事务执行权*/
+	err = lock_rec_lock(TRUE, LOCK_X, rec, index, thr);
+
+	lock_mutex_exit_kernel();
+
+	ut_ad(lock_rec_queue_validate(rec, index));
+
+	if(err == DB_SUCCESS)
+		page_update_max_trx_id(buf_frame_algin(rec), thr_get_trx(thr)->id)
+}
+
+/*通过二级索引读取记录行，需要对记录加上一个mode模式的行锁*/
+ulint lock_sec_rec_read_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, ulint mode, que_thr_t* thr)
+{
+	ulint err;
+
+	ut_ad(!(index->type & DICT_CLUSTERED));
+	ut_ad(page_rec_is_user_rec(rec) || page_rec_is_supremum(rec));
+
+	if(flags & BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
+
+	lock_mutex_enter_kernel();
+
+	ut_ad(mode != LOCK_X || lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
+	ut_ad(mode != LOCK_S || lock_table_has(thr_get_trx(thr), index->table, LOCK_IS));
+
+	if((ut_dulint_cmp(page_get_max_trx_id(buf_frame_align(rec)), trx_list_get_min_trx_id()) >= 0|| recv_recovery_is_on()) 
+		&& !page_rec_is_supremum(rec))
+		lock_rec_convert_impl_to_expl(rec, index); /*在rec记录上加上一个LOCK_X行锁*/
+
+	err = lock_rec_lock(FALSE, mode, rec, index, thr);
+
+	lock_mutex_exit_kernel();
+
+	ut_ad(lock_rec_queue_validate(rec, index));
+
+	return err;
+}
+
+ulint lock_clust_rec_read_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, ulint mode, que_thr_t* thr)
+{
+	ulint	err;
+
+	ut_ad(index->type & DICT_CLUSTERED);
+	ut_ad(page_rec_is_user_rec(rec) || page_rec_is_supremum(rec));
+
+	if(flags & BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
+
+	lock_mutex_enter_kernel();
+
+	ut_ad(mode != LOCK_X || lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
+	ut_ad(mode != LOCK_S || lock_table_has(thr_get_trx(thr), index->table, LOCK_IS));
+
+	if(!page_rec_is_supremum(rec))
+		lock_rec_convert_impl_to_expl(rec, index); /*在记录行上加上一个LOCK_X锁*/
+
+	err = lock_rec_lock(FALSE, mode, rec, index, thr);
+
+	lock_mutex_exit_kernel();
+
+	ut_ad(lock_rec_queue_validate(rec, index));
+
+	return err;
 }
 
 /************************************************************************/
