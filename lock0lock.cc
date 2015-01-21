@@ -10,7 +10,8 @@
 
 
 ibool lock_print_waits = FALSE;
-/*事务锁系统句柄*/
+
+/*事务行锁全局HASH表,表锁不会放入其中，表锁只通过dict table做关联*/
 lock_sys_t* lock_sys = NULL;
 
 /*表事务锁对象定义*/
@@ -22,22 +23,22 @@ typedef struct lock_table_struct
 
 typedef struct lock_rec_struct
 {
-	ulint		space;		/*记录所处的space的ID*/
-	ulint		page_no;	/*记录所处的page页号*/
-	ulint		n_bits;		/*行锁的bitmap位数，lock_t结构后面会跟一个BUF，长度为n_bits / 8*/
+	ulint		space;				/*记录所处的space的ID*/
+	ulint		page_no;			/*记录所处的page页号*/
+	ulint		n_bits;				/*行锁的bitmap位数，lock_t结构后面会跟一个BUF，长度为n_bits / 8*/
 }lock_rec_t;
 
 /*锁对象*/
 struct lock_struct
 {
-	trx_t*			trx;
-	ulint			type_mode;
-	hash_node_t		hash;
-	dict_index_t*	index;
-	UT_LIST_NODE_T(lock_t) trx_locks;
+	trx_t*			trx;			/*执行事务指针*/
+	ulint			type_mode;		/*锁类型和状态，类型有LOCK_ERC和LOCK_TABLE,状态有LOCK_WAIT, LOCK_GAP,强弱：LOCK_X,LOCK_S等*/
+	hash_node_t		hash;			/*hash表的对应节点，table lock是无效的*/
+	dict_index_t*	index;			/*行锁的行记录索引*/
+	UT_LIST_NODE_T(lock_t) trx_locks; /*一个trx_locks的列表前后关系*/
 	union{
-		lock_table_t	tab_lock;/*表锁*/
-		lock_rec_t		rec_lock;/*行锁*/
+		lock_table_t	tab_lock;	/*表锁*/
+		lock_rec_t		rec_lock;	/*行锁*/
 	}un_member;
 };
 
@@ -46,12 +47,12 @@ ibool lock_deadlock_found = FALSE;
 /*错误信息缓冲区，5000字节*/
 char* lock_latest_err_buf;
 
-
+/*死锁检测函数*/
 static ibool		lock_deadlock_occurs(lock_t* lock, trx_t* trx);
 static ibool		lock_deadlock_recursive(trx_t* start, trx_t* trx, lock_t* wait_lock, ulint* cost);
 
 /************************************************************************/
-/*kernel_mutex是在srv0srv.h定义的全局内核锁*/
+/*kernel_mutex是在srv0srv.h定义的全局内核mutex latch*/
 UNIV_INLINE void lock_mutex_enter_kernel()
 {
 	mutex_enter(&kernel_mutex);
@@ -62,7 +63,7 @@ UNIV_INLINE void lock_mutex_exit_kernel()
 	mutex_exit(&kernel_mutex);
 }
 
-/*检查记录是否可以进行一致性读*/
+/*通过聚合索引检查记录是否可以进行一致性锁定读*/
 ibool lock_clust_rec_cons_read_sees(rec_t* rec, dict_index_t* index, read_view_t* view)
 {
 	dulint	trx_id;
@@ -77,7 +78,7 @@ ibool lock_clust_rec_cons_read_sees(rec_t* rec, dict_index_t* index, read_view_t
 	return FALSE;
 }
 
-/*检查非聚合索引记录是否可以进行一致性读*/
+/*检查非聚集索引记录是否可以进行一致性读*/
 ulint  lock_sec_rec_cons_read_sees(rec_t* rec, dict_index_t* index, read_view_t* view)
 {
 	dulint	max_trx_id;
@@ -88,15 +89,15 @@ ulint  lock_sec_rec_cons_read_sees(rec_t* rec, dict_index_t* index, read_view_t*
 	if(recv_recovery_is_on()) /*检查redo log是否在进行日志恢复*/
 		return FALSE;
 
-	/*获得对应记录的max trx id*/
+	/*获得对应page的二级索引最大操作的事务ID*/
 	max_trx_id = page_get_max_trx_id(buf_frame_align(rec));
-	if(ut_dulint_cmp(max_trx_id, view->up_limit_id) >= 0)
+	if(ut_dulint_cmp(max_trx_id, view->up_limit_id) >= 0) /*view中的事务ID大于页中的max trx id,不能进行一致性锁定读*/
 		return FALSE;
 
 	return TRUE;
 }
 
-/*建立一个系统锁对象*/
+/*建立一个系统行锁哈希表对象*/
 void lock_sys_create(ulint n_cells)
 {
 	/*创建lock sys对象*/
@@ -112,7 +113,7 @@ ulint lock_get_size()
 	return (ulint)(sizeof(lock_t));
 }
 
-/*获得事务锁的模式(IS, IX, S, X, NONE)*/
+/*获得事务锁的模式(IS, IX, S, X, AINC,NONE)*/
 UNIV_INLINE ulint lock_get_mode(lock_t* lock)
 {
 	ut_ad(lock);
@@ -126,7 +127,7 @@ UNIV_INLINE ulint lock_get_type(lock_t* lock)
 	return lock->type_mode & LOCK_TYPE_MASK;
 }
 
-/*获得锁是否在等待状态*/
+/*检查所是否在LOCK_WAIT状态*/
 UNIV_INLINE ibool lock_get_wait(lock_t* lock)
 {
 	ut_ad(lock);
@@ -136,7 +137,7 @@ UNIV_INLINE ibool lock_get_wait(lock_t* lock)
 	return FALSE;
 }
 
-/*设置事务锁的等待*/
+/*设置事务锁的等待状态LOCK_WAIT*/
 UNIV_INLINE void lock_set_lock_and_trx_wait(lock_t* lock, trx_t* trx)
 {
 	ut_ad(lock);
@@ -146,7 +147,7 @@ UNIV_INLINE void lock_set_lock_and_trx_wait(lock_t* lock, trx_t* trx)
 	lock->type_mode = lock->type_mode | LOCK_WAIT;
 }
 
-/*复位事务锁的等待状态*/
+/*清除锁的等待LOCK_WAIT状态*/
 UNIV_INLINE void lock_reset_lock_and_trx_wait(lock_t* lock)
 {
 	ut_ad((lock->trx)->wait_lock == lock);
@@ -156,7 +157,7 @@ UNIV_INLINE void lock_reset_lock_and_trx_wait(lock_t* lock)
 	lock->type_mode = lock->type_mode & ~LOCK_WAIT;
 }
 
-/*获得事务锁的记录范围锁定状态*/
+/*判断锁是否是LOCK_GAP范围锁状态*/
 UNIV_INLINE ibool lock_rec_get_gap(lock_t* lock)
 {
 	ut_ad(lock);
@@ -168,7 +169,7 @@ UNIV_INLINE ibool lock_rec_get_gap(lock_t* lock)
 	return FALSE;
 }
 
-/*设置事务锁的记录范围锁定状态*/
+/*设置事务锁的记录LOCK_GAP范围锁状态*/
 UNIV_INLINE void lock_rec_set_gap(lock_t* lock, ibool val)
 {
 	ut_ad(lock);
@@ -181,7 +182,7 @@ UNIV_INLINE void lock_rec_set_gap(lock_t* lock, ibool val)
 		lock->type_mode = lock->type_mode & ~LOCK_GAP;
 }
 
-/*判断事务锁的mode1是否比mode2更控制的严，一般LOCK_X > LOCK_S > LOCK_IX > LOCK_IS*/
+/*判断锁的mode1是否比mode2更高强度，一般LOCK_X > LOCK_S > LOCK_IX >= LOCK_IS*/
 UNIV_INLINE ibool lock_mode_stronger_or_eq(ulint mode1, ulint mode2)
 {
 	ut_ad(mode1 == LOCK_X || mode1 == LOCK_S || mode1 == LOCK_IX
@@ -237,7 +238,7 @@ UNIV_INLINE ibool lock_mode_compatible(ulint mode1, ulint mode2)
 	return FALSE;							 
 }
 
-/*加入mode == LOCK_S,返回LOCK_X*/
+/*假如mode == LOCK_S,返回LOCK_X；mode = LOCK_X返回LOCK_S*/
 UNIV_INLINE ulint lock_get_confl_mode(ulint mode)
 {
 	ut_ad(mode == LOCK_X || mode == LOCK_S);
@@ -247,7 +248,7 @@ UNIV_INLINE ulint lock_get_confl_mode(ulint mode)
 	return LOCK_S;
 }
 
-/*判断lock1是否和lock2兼容*/
+/*判断lock1是否会因为lock2的存在而阻塞事务*/
 UNIV_INLINE ibool lock_has_to_wait(lock_t* lock1, lock_t* lock2)
 {
 	if(lock1->trx != lock2->trx && !lock_mode_compatible(lock_get_mode(lock1), lock_get_mode(lock2)))
@@ -255,12 +256,13 @@ UNIV_INLINE ibool lock_has_to_wait(lock_t* lock1, lock_t* lock2)
 	return FALSE;
 }
 
-/*获得记录行锁的bits*/
+/*获得记录行锁所的bitmap长度*/
 UNIV_INLINE ulint lock_rec_get_n_bits(lock_t* lock)
 {
 	return lock->un_member.rec_lock.n_bits;
 }
 
+/*获得页第i行的记录行锁*/
 UNIV_INLINE ibool lock_rec_get_nth_bit(lock_t* lock, ulint i)
 {
 	ulint	byte_index;
@@ -281,6 +283,7 @@ UNIV_INLINE ibool lock_rec_get_nth_bit(lock_t* lock, ulint i)
 	return ut_bit_get_nth(b, bit_index);
 }
 
+/*页第i行添加一个lock行锁*/
 UNIV_INLINE void lock_rec_set_nth_bit(lock_t* lock, ulint i)
 {
 	ulint	byte_index;
@@ -301,7 +304,7 @@ UNIV_INLINE void lock_rec_set_nth_bit(lock_t* lock, ulint i)
 	*ptr = (byte)b;
 }
 
-/*获得rec lock bitmap第一个有效位的序号*/
+/*获得rec lock bitmap第一个有lock行锁的行序号*/
 static ulint lock_rec_find_set_bit(lock_t* lock)
 {
 	ulint i;
@@ -313,6 +316,7 @@ static ulint lock_rec_find_set_bit(lock_t* lock)
 	return ULINT_UNDEFINED;
 }
 
+/*清除页的第i行的lock行锁状态*/
 UNIV_INLINE void lock_rec_reset_nth_bit(lock_t* lock, ulint i)
 {
 	ulint	byte_index;
@@ -333,7 +337,7 @@ UNIV_INLINE void lock_rec_reset_nth_bit(lock_t* lock, ulint i)
 	*ptr = (byte)b;
 }
 
-/*获取也得行记录的下一个锁,在同一个page中*/
+/*获取也得记录同一个页的下一个锁*/
 UNIV_INLINE lock_t* lock_rec_get_next_on_page(lock_t* lock)
 {
 	ulint	space;
@@ -344,12 +348,13 @@ UNIV_INLINE lock_t* lock_rec_get_next_on_page(lock_t* lock)
 	space = lock->un_member.rec_lock.space;
 	page_no = lock->un_member.rec_lock.page_no;
 
+	/*在lock_sys的哈希表中查找*/
 	for(;;){
 		lock = HASH_GET_NEXT(hash, lock);
 		if(lock == NULL)
 			break;
 
-		/*查找到了对应的*/
+		/*LOCK还是在同一页中*/
 		if(lock->un_member.rec_lock.space == space && lock->un_member.rec_lock.page_no = page_no)
 			break;
 	}
@@ -357,13 +362,14 @@ UNIV_INLINE lock_t* lock_rec_get_next_on_page(lock_t* lock)
 	return lock;
 }
 
-/*获得page的第一个锁*/
+/*获得（space, page_no）指向的page的第一个行锁*/
 UNIV_INLINE lock_t* lock_rec_get_first_on_page_addr(ulint space, ulint page_no)
 {
 	lock_t* lock;
 
 	ut_ad(mutex_own(&kernel_mutex));
 
+	/*lock_sys哈希表中找*/
 	lock = HASH_GET_FIRST(lock_sys->rec_hash, lock_rec_hash(space, page_no));
 	while(lock){
 		if ((lock->un_member.rec_lock.space == space) 
@@ -376,7 +382,7 @@ UNIV_INLINE lock_t* lock_rec_get_first_on_page_addr(ulint space, ulint page_no)
 	return lock;
 }
 
-/*判断space page_no对应的页是否有锁*/
+/*判断（space page_no）指向的页是否有显式行锁*/
 ibool lock_rec_expl_exist_on_page(ulint space, ulint page_no)
 {
 	ibool ret;
@@ -405,6 +411,7 @@ UNIV_INLINE lock_t* lock_rec_get_first_on_page(byte* ptr)
 	hash = buf_frame_get_lock_hash_val(ptr);
 	lock = HASH_GET_FIRST(lock_sys->rec_hash, hash);
 	while(lock){
+		/*为什么不是放在外面呢？个人觉得应该放在外面比较好*/
 		space = buf_frame_get_space_id(ptr);
 		page_no = buf_frame_get_page_no(ptr);
 
@@ -417,7 +424,7 @@ UNIV_INLINE lock_t* lock_rec_get_first_on_page(byte* ptr)
 	return lock;
 }
 
-/*获得行记录的下一个锁*/
+/*获得行记录的lock下一个显式行锁*/
 UNIV_INLINE lock_t* lock_rec_get_next(rec_t* rec, lock_t* lock)
 {
 	ut_ad(mutex_own(&kernel_mutex));
@@ -432,6 +439,7 @@ UNIV_INLINE lock_t* lock_rec_get_next(rec_t* rec, lock_t* lock)
 	}
 }
 
+/*获得rec记录第一个显式行锁*/
 UNIV_INLINE lock_t* lock_rec_get_first(rec_t* rec)
 {
 	lock_t* lock;
@@ -448,6 +456,7 @@ UNIV_INLINE lock_t* lock_rec_get_first(rec_t* rec)
 	return lock;
 }
 
+/*清空lock的bitmap,这个函数不能在事务因为这个行锁阻塞的时候调用，只能在锁建立时初始化用*/
 static void lock_rec_bitmap_reset(lock_t* lock)
 {
 	byte*	ptr;
@@ -480,7 +489,7 @@ static lock_t* lock_rec_copy(lock_t* lock, mem_heap_t* heap)
 	return dupl_lock;
 }
 
-/*获得in_lock的前一个的行记录锁*/
+/*获得in_lock的前一个的行记录锁,这个记录行的行序号是heap_no*/
 static lock_t* lock_rec_get_prev(lock_t* in_lock, ulint heap_no)
 {
 	lock_t*	lock;
@@ -508,14 +517,14 @@ static lock_t* lock_rec_get_prev(lock_t* in_lock, ulint heap_no)
 	}
 }
 
-/*判断事务trx是否持有table的锁比mode更严格*/
+/*判断事务trx是否持有table的锁比mode更高强度的锁,如果有，返回lock指针*/
 UNIV_INLINE lock_t* lock_table_has(trx_t* trx, dict_table_t* table, ulint mode)
 {
 	lock_t* lock;
 
 	ut_ad(mutex_own(&kernel_mutex));
 
-	/*从后面扫描到前面, 有可能事务已经持有了锁*/
+	/*从后面扫描到前面, 可能trx事务已经有更高强度的锁在这个table上*/
 	lock = UT_LIST_GET_LAST(table->locks);
 	while(lock != NULL){
 		if(lock->trx == trx && lock_mode_stronger_or_eq(lock_get_mode(lock), mode)){
@@ -525,9 +534,11 @@ UNIV_INLINE lock_t* lock_table_has(trx_t* trx, dict_table_t* table, ulint mode)
 
 		lock = UT_LIST_GET_PREV(un_member.tab_lock.locks, lock);
 	}
+
+	return NULL;
 }
 
-/*获得一个比mode更严格的rec行记录锁，这个锁必须是trx发起的，并且处于non_gap状态*/
+/*获得一个比mode更高强度的rec行记录锁（显式锁），这个锁必须是trx发起的，并且处于non_gap状态*/
 UNIV_INLINE lock_t* lock_rec_has_expl(ulint mode, rec_t* rec, trx_t* trx)
 {
 	lock_t* lock;
@@ -538,14 +549,16 @@ UNIV_INLINE lock_t* lock_rec_has_expl(ulint mode, rec_t* rec, trx_t* trx)
 	lock = lock_rec_get_first(rec);
 	while(lock != NULL){
 		if(lock->trx == trx && lock_mode_stronger_or_eq(lock_get_mode(lock), mode)
-			&& !lock_get_wait(lock) && !lock_rec_get_gap(lock) || page_rec_is_supremum(rec))
+			&& !lock_get_wait(lock) && !(lock_rec_get_gap(lock) || page_rec_is_supremum(rec)))
 			return lock;
 
 		lock = lock_rec_get_next(rec, lock);
 	}
+
+	return NULL;
 }
 
-/*检查是否除trx以外的事务有持有比mode更严格的锁，*/
+/*检查是否除trx以外的事务在rec记录上持有比mode更高强度的锁（显式锁）*/
 UNIV_INLINE lock_t* lock_rec_other_has_expl_req(ulint mode, ulint gap, ulint wait, rec_t* rec, trx_t* trx)
 {
 	lock_t* lock;
@@ -555,8 +568,9 @@ UNIV_INLINE lock_t* lock_rec_other_has_expl_req(ulint mode, ulint gap, ulint wai
 
 	lock = lock_rec_get_first(rec);
 	while(lock != NULL){
-		if(lock->trx != trx && (gap || !(lock_rec_get_gap(lock) || page_rec_is_supremum(rec))
-			&& (wait || !lock_get_wait(lock)) && lock_mode_stronger_or_eq(lock_get_mode(lock), mode)))
+		if(lock->trx != trx && (gap || !(lock_rec_get_gap(lock) || page_rec_is_supremum(rec))) /*gap锁在supremum，就是+无穷范围*/
+			&& (wait || !lock_get_wait(lock)) 
+			&& lock_mode_stronger_or_eq(lock_get_mode(lock), mode))
 			return lock;
 
 		lock = lock_rec_get_next(rec, lock);
@@ -565,7 +579,7 @@ UNIV_INLINE lock_t* lock_rec_other_has_expl_req(ulint mode, ulint gap, ulint wai
 	return NULL;
 }
 
-/*在记录所在的page中，查找trx事务发起的type_mode模式的的锁*/
+/*在记录所在的page中，查找trx事务发起的type_mode模式的的锁,并且锁所在行的序号必须大于rec的序号*/
 UNIV_INLINE lock_t* lock_rec_find_similar_on_page(ulint type_mode, rec_t* rec, trx_t* trx)
 {
 	lock_t*	lock;
@@ -2524,9 +2538,82 @@ ulint lock_clust_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t
 	return err;
 }
 
+/*通过二级索引修改记录行，激活一个等待的LOCK_X锁，如果成功，设置PAGE的操作trx_id*/
 ulint lock_sec_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, que_thr_t* thr)
 {
+	if(flags & BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
 
+	ut_ad(!(index->type & DICT_CLUSTERED));
+
+	lock_mutex_enter_kernel();
+	
+	ut_ad(lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
+	/*在rec行上激活一个lock_x事务执行权*/
+	err = lock_rec_lock(TRUE, LOCK_X, rec, index, thr);
+
+	lock_mutex_exit_kernel();
+
+	ut_ad(lock_rec_queue_validate(rec, index));
+
+	if(err == DB_SUCCESS)
+		page_update_max_trx_id(buf_frame_algin(rec), thr_get_trx(thr)->id)
+}
+
+/*通过二级索引读取记录行，需要对记录加上一个mode模式的行锁*/
+ulint lock_sec_rec_read_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, ulint mode, que_thr_t* thr)
+{
+	ulint err;
+
+	ut_ad(!(index->type & DICT_CLUSTERED));
+	ut_ad(page_rec_is_user_rec(rec) || page_rec_is_supremum(rec));
+
+	if(flags & BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
+
+	lock_mutex_enter_kernel();
+
+	ut_ad(mode != LOCK_X || lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
+	ut_ad(mode != LOCK_S || lock_table_has(thr_get_trx(thr), index->table, LOCK_IS));
+
+	if((ut_dulint_cmp(page_get_max_trx_id(buf_frame_align(rec)), trx_list_get_min_trx_id()) >= 0|| recv_recovery_is_on()) 
+		&& !page_rec_is_supremum(rec))
+		lock_rec_convert_impl_to_expl(rec, index); /*在rec记录上加上一个LOCK_X行锁*/
+
+	err = lock_rec_lock(FALSE, mode, rec, index, thr);
+
+	lock_mutex_exit_kernel();
+
+	ut_ad(lock_rec_queue_validate(rec, index));
+
+	return err;
+}
+
+ulint lock_clust_rec_read_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, ulint mode, que_thr_t* thr)
+{
+	ulint	err;
+
+	ut_ad(index->type & DICT_CLUSTERED);
+	ut_ad(page_rec_is_user_rec(rec) || page_rec_is_supremum(rec));
+
+	if(flags & BTR_NO_LOCKING_FLAG)
+		return DB_SUCCESS;
+
+	lock_mutex_enter_kernel();
+
+	ut_ad(mode != LOCK_X || lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
+	ut_ad(mode != LOCK_S || lock_table_has(thr_get_trx(thr), index->table, LOCK_IS));
+
+	if(!page_rec_is_supremum(rec))
+		lock_rec_convert_impl_to_expl(rec, index); /*在记录行上加上一个LOCK_X锁*/
+
+	err = lock_rec_lock(FALSE, mode, rec, index, thr);
+
+	lock_mutex_exit_kernel();
+
+	ut_ad(lock_rec_queue_validate(rec, index));
+
+	return err;
 }
 
 /************************************************************************/
