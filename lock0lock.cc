@@ -600,7 +600,7 @@ UNIV_INLINE lock_t* lock_rec_find_similar_on_page(ulint type_mode, rec_t* rec, t
 	return NULL;
 }
 
-/*返回在记录rec的二级索引上存储LOCK_IX,返回发起这个锁的事务trx_t*/
+/*查找rec记录的二级索引是否隐式锁*/
 trx_t* lock_sec_rec_some_has_impl_off_kernel(rec_t* rec, dict_index_t* index)
 {
 	page_t*	page;
@@ -753,16 +753,16 @@ static lock_t* lock_rec_add_to_queue(ulint type_mode, rec_t* rec, dict_index_t* 
 		lock = lock_rec_get_next_on_page(lock);
 	}
 
-	/*查找trx事务发起模式为type_mode的记录行锁，必须是在rec所处的page中的行*/
+	/*查找trx事务发起模式为type_mode的记录行锁，必须是在rec所处的page中的行记录*/
 	similar_lock = lock_rec_find_similar_on_page(type_mode, rec, trx);
 
-	/*可以重用similar_lock*/
+	/*可以重用similar_lock,一个执行事务在一个行上只会有一个行锁*/
 	if(similar_lock != NULL && !somebody_waits && !(type_mode & LOCK_WAIT)){
-		lock_rec_set_nth_bit(similar_lock, heap_no);
+		lock_rec_set_nth_bit(similar_lock, heap_no); /*在对应行位上加上锁标识，只有目标行是在事务在等待才会添加标识，否则有可能可以直接执行*/
 		return similar_lock;
 	}
 
-	/*创建一个新的行锁，并进行排队*/
+	/*没有对应的行锁，直接创建一个，并进行排队*/
 	return lock_rec_create(type_mode, rec, index, trx);
 }
 
@@ -778,12 +778,12 @@ UNIV_INLINE ibool lock_rec_lock_fast(ibool impl, ulint mode, rec_t* rec, dict_in
 	heap_no = rec_get_heap_no(rec);
 	lock = lock_rec_get_first_on_page(rec);
 	if(lock == NULL){ /*page中没有其他的锁, 创建一个mode类型的锁*/
-		if(!impl)
+		if(!impl) /*没有隐式锁，创建一个显式锁在这个行记录上*/
 			lock_rec_create(mode, rec, index, thr_get_trx(thr));
 		return TRUE;
 	}
 
-	/*page的有多个LOCK*/
+	/*page的有多个LOCK,不能快速获得锁权*/
 	if(lock_rec_get_next_on_page(lock))
 		return FALSE;
 
