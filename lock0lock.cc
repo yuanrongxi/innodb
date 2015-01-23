@@ -766,7 +766,7 @@ static lock_t* lock_rec_add_to_queue(ulint type_mode, rec_t* rec, dict_index_t* 
 	return lock_rec_create(type_mode, rec, index, trx);
 }
 
-/*快速获得行锁的控制权，大部分流程都是这样的*/
+/*快速获得行锁，大部分流程都是这样的,没有任何锁在这个行记录上*/
 UNIV_INLINE ibool lock_rec_lock_fast(ibool impl, ulint mode, rec_t* rec, dict_index_t* index, que_thr_t* thr)
 {
 	lock_t*	lock;
@@ -783,17 +783,17 @@ UNIV_INLINE ibool lock_rec_lock_fast(ibool impl, ulint mode, rec_t* rec, dict_in
 		return TRUE;
 	}
 
-	/*page的有多个LOCK,不能快速获得锁权*/
+	/*page的有多个LOCK,不能快速获得锁，进入SLOW模式*/
 	if(lock_rec_get_next_on_page(lock))
 		return FALSE;
 
-	/*lock的事务与thr中的trx不相同、或者不是行锁、或者lock的记录与rec不相同，直接返回*/
+	/*lock的事务与thr中的trx不相同、或者不是行锁、或者lock的记录与rec不相同，直接返回进入SLOW模式*/
 	if(lock->trx != thr_get_trx(thr) || lock->type_mode != (mode | LOCK_REC) 
 		|| lock_rec_get_n_bits(lock) <= heap_no)
 			return FALSE;
 
-	/*有且只有个行锁，并且这个行锁指向的记录rec,直接认为可以获得锁权*/
-	if(!impl)
+	/*有且只有个1行锁(不存在隐身锁)在这个行上，并且这个行锁指向的记录rec,直接认为可以获得锁权*/
+	if(!impl) 
 		lock_rec_set_nth_bit(lock, heap_no);
 
 	return TRUE;
@@ -815,11 +815,11 @@ static ulint lock_rec_lock_slow(ibool impl, ulint mode, rec_t* rec, dict_index_t
 	ut_ad((mode != LOCK_S) || lock_table_has(trx, index->table, LOCK_IS));
 	ut_ad((mode != LOCK_X) || lock_table_has(trx, index->table, LOCK_IX));
 
-	/*trx有比mode更加严格的锁模式存在rec行锁*/
+	/*trx有比mode更加严格的锁模式存在rec行锁(显式锁)，没必要对行上锁*/
 	if(lock_rec_has_expl(mode, rec, trx))
 		err = DB_SUCCESS;
-	else if(lock_rec_other_has_expl_req(confl_mode, 0, LOCK_WAIT, rec, trx)) /*其他事务有更严格的锁在rec行上*/
-		err = lock_rec_enqueue_waiting(mode, rec, index, thr); /*创建一个新锁并进行等待*/
+	else if(lock_rec_other_has_expl_req(confl_mode, 0, LOCK_WAIT, rec, trx)) /*其他事务有更严格的锁(行)在rec行上*/
+		err = lock_rec_enqueue_waiting(mode, rec, index, thr); /*创建一个新显式锁并进行等待*/
 	else{
 		if(!impl) /*增加一个行锁，并加入到锁队列中*/
 			lock_rec_add_to_queue(LOCK_REC | mode, rec, index, trx);
@@ -829,6 +829,7 @@ static ulint lock_rec_lock_slow(ibool impl, ulint mode, rec_t* rec, dict_index_t
 	return err;
 }
 
+/*对记录行上锁请求*/
 ulint lock_rec_lock(ibool impl, ulint mode, rec_t* rec, dict_index_t* index, que_thr_t* thr)
 {
 	ulint	err;
@@ -847,7 +848,7 @@ ulint lock_rec_lock(ibool impl, ulint mode, rec_t* rec, dict_index_t* index, que
 	return err;
 }
 
-/*检查wait_lock是否还有指向同一行记录并且不兼容的锁，也就是判断wait lock是否要进行等待*/
+/*检查wait_lock是否还有指向同一行记录并且不兼容的锁*/
 static ibool lock_rec_has_to_wait_in_queue(lock_t* wait_lock)
 {
 	lock_t*	lock;
@@ -875,7 +876,7 @@ static ibool lock_rec_has_to_wait_in_queue(lock_t* wait_lock)
 	return FALSE;
 }
 
-/*授予锁权*/
+/*获得锁权*/
 void lock_grant(lock_t* lock)
 {
 	ut_ad(mutex_own(&kernel_mutex));
@@ -883,7 +884,7 @@ void lock_grant(lock_t* lock)
 	/*锁的lock wait标识复位*/
 	lock_reset_lock_and_trx_wait(lock);
 
-	/*主键自增长锁模式*/
+	/*主键自增长锁模式,这种锁在*/
 	if(lock_get_mode(lock) == LOCK_AUTO_INC){
 		if(lock->trx->auto_inc_lock != NULL)
 			fprintf(stderr, "InnoDB: Error: trx already had an AUTO-INC lock!\n");
@@ -894,11 +895,11 @@ void lock_grant(lock_t* lock)
 	if(lock_print_waits)
 		printf("Lock wait for trx %lu ends\n", ut_dulint_get_low(lock->trx->id));
 
-	/*结束事务等待*/
+	/*结束事务等待,进行事务执行*/
 	trx_end_lock_wait(lock->trx);
 }
 
-/*取消正在等待的锁*/
+/*取消正在等待的锁,唤醒锁请求对应的事务*/
 static void lock_rec_cancel(lock_t* lock)
 {
 	ut_ad(mutex_own(&kernel_mutex));
@@ -912,7 +913,7 @@ static void lock_rec_cancel(lock_t* lock)
 	trx_end_lock_wait(lock->trx);
 }
 
-/*将in_lock从lock_sys中删除， 并激活其对应页的一个等待行锁, in_lock可能是一个waiting或者granted状态的锁*/
+/*将in_lock从lock_sys中删除， 并唤醒其对应页的一个等待行锁的事务, in_lock可能是一个waiting或者granted状态的锁*/
 void lock_rec_dequeue_from_page(lock_t* in_lock)
 {
 	ulint	space;
@@ -960,7 +961,7 @@ static void lock_rec_discard(lock_t* in_lock)
 	UT_LIST_REMOVE(trx_locks, trx->trx_locks, in_lock);
 }
 
-/*遗弃page中所有行记录锁*/
+/*遗弃page中所有行记录锁请求*/
 static void lock_rec_free_all_from_discard_page(page_t* page)
 {
 	ulint	space;
@@ -1254,7 +1255,7 @@ void lock_update_copy_and_discard(page_t* new_page, page_t* page)
 {
 	lock_mutex_enter_kernel();
 
-	/*将page的锁全部扩大到new_page的supremum上，相当于GAP范围升级*/
+	/*将page的锁全部转移到new_page的supremum上，相当于GAP范围升级*/
 	lock_rec_move(page_get_supremum_rec(new_page), page_get_supremum_rec(page));
 	lock_rec_free_all_from_discard_page(page);
 
@@ -1289,7 +1290,7 @@ void lock_update_merge_left(page_t* left_page, rec_t* orig_pred, page_t* right_p
 	lock_mutex_exit_kernel();
 }
 
-/*清空heir的记录行锁，而后继承rec的锁变成heir的GAP范围锁，相当于锁升级*/
+/*清空heir的记录行锁，而后继承rec的锁变成heir的GAP范围锁*/
 void lock_rec_reset_and_inherit_gap_locks(rec_t* heir, rec_t* rec)
 {
 	mutex_enter(&kernel_mutex);	      		
@@ -1300,7 +1301,7 @@ void lock_rec_reset_and_inherit_gap_locks(rec_t* heir, rec_t* rec)
 	mutex_exit(&kernel_mutex);	 
 }
 
-/*将page的所有行锁转移到heir上*/
+/*将page的所有行锁转移到heir行上*/
 void lock_update_discard(rec_t* heir, page_t* page)
 {
 	rec_t* rec;
@@ -1323,11 +1324,11 @@ void lock_update_discard(rec_t* heir, page_t* page)
 		rec = page_rec_get_next(rec);
 	}
 
-	/*释放掉所有page上的锁等待*/
+	/*遗弃掉所有page上的锁等待*/
 	lock_rec_free_all_from_discard_page(page);
 }
 
-/*记录添加时的行锁继承*/
+/*记录添加或修改时的行锁，是个GAP范围锁，*/
 void lock_update_insert(rec_t* rec)
 {
 	lock_mutex_enter_kernel();
@@ -1358,7 +1359,7 @@ void lock_rec_restore_from_page_infimum(rec_t* rec, page_t* page)
 	lock_mutex_exit_kernel();
 }
 
-/*检查一个锁请求是否会造成事务死锁*/
+/*检查一个锁请求是否会造成事务死锁,是一个递归检测过程*/
 static ibool lock_deadlock_occurs(lock_t* lock, trx_t* trx)
 {
 	dict_table_t*	table;
@@ -1608,7 +1609,7 @@ ulint lock_table_enqueue_waiting(ulint mode, dict_table_t* table, que_thr_t* thr
 	return DB_LOCK_WAIT;
 }
 
-/*检查表持有的表锁是否和mode模式兼容？*/
+/*检查表持有的表锁是否和mode模式排斥？*/
 UNIV_INLINE ibool lock_table_other_has_incompatible(trx_t* trx, ulint wait, dict_table_t* table, ulint mode)
 {
 	lock_t* lock;
@@ -1624,7 +1625,7 @@ UNIV_INLINE ibool lock_table_other_has_incompatible(trx_t* trx, ulint wait, dict
 		lock = UT_LIST_GET_PREV(un_member.tab_lock.locks, lock);
 	}
 
-	return FALSE;
+	return FALSE; 
 }
 
 ulint lock_table(ulint flags, dict_table_t* table, ulint mode, que_thr_t* thr)
@@ -1661,7 +1662,7 @@ ulint lock_table(ulint flags, dict_table_t* table, ulint mode, que_thr_t* thr)
 
 	return DB_SUCCESS;
 }
-/*判断table是有表锁*/
+/*判断table是有表锁请求*/
 ibool lock_is_on_table(dict_table_t* table)
 {
 	ibool	ret;
@@ -1670,7 +1671,7 @@ ibool lock_is_on_table(dict_table_t* table)
 
 	lock_mutex_enter_kernel();
 	
-	if(UT_LIST_GET_LAST(table->locks))
+	if(UT_LIST_GET_LAST(table->locks) != NULL)
 		ret = TRUE;
 	else
 		ret = FALSE;
@@ -1680,7 +1681,7 @@ ibool lock_is_on_table(dict_table_t* table)
 	return ret;
 }
 
-/*判断wait_lock是否需要在队列中等待锁权*/
+/*判断wait_lock是否需要在队列中等待锁请求*/
 static ibool lock_table_has_to_wait_in_queue(lock_t* wait_lock)
 {
 	dict_table_t*	table;
@@ -1728,13 +1729,13 @@ void lock_table_unlock_auto_inc(trx_t* trx)
 	if(trx->auto_inc_lock){
 		mutex_enter(&kernel_mutex);
 
-		lock_table_dequeue(trx->auto_inc_lock)
+		lock_table_dequeue(trx->auto_inc_lock);
 
 		mutex_exit(&kernel_mutex);
 	}
 }
 
-/*释放trx事务的所有锁请求,一般在事务回滚的时候调用*/
+/*释放一个事务的所有锁请求*/
 void lock_release_off_kernel(trx_id* trx)
 {
 	ulint	count;
