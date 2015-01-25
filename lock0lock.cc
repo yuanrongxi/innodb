@@ -848,7 +848,7 @@ ulint lock_rec_lock(ibool impl, ulint mode, rec_t* rec, dict_index_t* index, que
 	return err;
 }
 
-/*检查wait_lock是否还有指向同一行记录并且不兼容的锁*/
+/*检查wait_lock是否还有指向同一行记录并且不兼容的锁,O(n)*/
 static ibool lock_rec_has_to_wait_in_queue(lock_t* wait_lock)
 {
 	lock_t*	lock;
@@ -1947,7 +1947,7 @@ lock_rec_print(char* buf,lock_t* lock)
 	mtr_commit(&mtr);
 }
 
-/*统计记录锁的个数*/
+/*统计记录行锁的个数*/
 static ulint lock_get_n_rec_locks()
 {
 	lock_t*	lock;
@@ -2492,7 +2492,7 @@ ulint lock_rec_insert_check_and_lock(ulint flags, rec_t* rec, dict_index_t* inde
 	return err;
 }
 
-/*假如一个事务已经有一个LOCK_X在rec行上，不需要在rec上加LOCK_X锁，如果没有，加上一个LOCK_X*/
+/*将隐式锁转换成一个显示的LOCK_X*/
 static void lock_rec_convert_impl_to_expl(rec_t* rec, dict_index_t* index)
 {
 	trx_t*	impl_trx;
@@ -2500,9 +2500,9 @@ static void lock_rec_convert_impl_to_expl(rec_t* rec, dict_index_t* index)
 	ut_ad(mutex_own(&kernel_mutex));
 	ut_ad(page_rec_is_user_rec(rec));
 
-	if(index->type & DICT_CLUSTERED)
+	if(index->type & DICT_CLUSTERED) /*聚集索引上的隐式锁的事务获取*/
 		impl_trx = lock_clust_rec_some_has_impl(rec, index);
-	else
+	else /*辅助索引上的隐式索引的事务获取，这个过程非常复杂！！！*/
 		impl_trx = lock_sec_rec_some_has_impl_off_kernel(rec, index);
 
 	if(impl_trx){
@@ -2511,7 +2511,7 @@ static void lock_rec_convert_impl_to_expl(rec_t* rec, dict_index_t* index)
 	}
 }
 
-/*假如一个事务需要对记录REC进行修改，添加一个LOCK_X在rec行上，并尝试获得器LOCK_X锁的执行权*/
+/*假如一个事务需要对记录REC进行修改，检查主索引是否有隐式锁，如果有转换成显示锁，并且尝试获得锁权执行事务*/
 ulint lock_clust_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, que_thr_t* thr)
 {
 	trx_t*	trx;
@@ -2526,7 +2526,7 @@ ulint lock_clust_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t
 
 	lock_mutex_enter_kernel();
 	ut_ad(lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
-	/*在rec行上增加一个LOCK_X*/
+	/*如果聚集索引上存在隐式锁，转换成显示锁*/
 	lock_rec_convert_impl_to_expl(rec, index);
 
 	/*尝试获得thr对应执行事务对rec行锁的LOCK_X执行权*/
@@ -2561,7 +2561,7 @@ ulint lock_sec_rec_modify_check_and_lock(ulint flags, rec_t* rec, dict_index_t* 
 		page_update_max_trx_id(buf_frame_algin(rec), thr_get_trx(thr)->id)
 }
 
-/*通过二级索引读取记录行，需要对记录加上一个mode模式的行锁*/
+/*通过二级索引读取记录行，如果记录的二级索引存在一个隐式锁，转换成显示锁（LOCK_X）,并尝试获得事务的锁执行权*/
 ulint lock_sec_rec_read_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, ulint mode, que_thr_t* thr)
 {
 	ulint err;
