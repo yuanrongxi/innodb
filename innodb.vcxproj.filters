@@ -56,6 +56,9 @@
     <Filter Include="dict">
       <UniqueIdentifier>{f3a2af99-136f-4537-b0df-fb2a94578552}</UniqueIdentifier>
     </Filter>
+    <Filter Include="btree">
+      <UniqueIdentifier>{456b1edd-9baf-41fa-8450-e2a6ad861c7c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -105,6 +108,9 @@
     </None>
     <None Include="lock0lock.inl">
       <Filter>lock</Filter>
+    </None>
+    <None Include="btr0btr.inl">
+      <Filter>btree</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -255,6 +261,12 @@
     <ClInclude Include="dict0types.h">
       <Filter>dict</Filter>
     </ClInclude>
+    <ClInclude Include="btr0btr.h">
+      <Filter>btree</Filter>
+    </ClInclude>
+    <ClInclude Include="btr0types.h">
+      <Filter>btree</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -376,6 +388,9 @@
     </ClCompile>
     <ClCompile Include="lock0lock.cc">
       <Filter>lock</Filter>
+    </ClCompile>
+    <ClCompile Include="btr0btr.cc">
+      <Filter>btree</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

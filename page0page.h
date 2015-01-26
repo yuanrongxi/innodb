@@ -35,7 +35,8 @@ typedef byte	page_header_t;
 #define PAGE_N_RECS					16		/*页中存在的记录数*/
 #define PAGE_MAX_TRX_ID				18		/*修改当前页最大的事务ID*/
 #define PAGE_HEADER_PRIV_END		26		/**/
-#define PAGE_LEVEL					28		/*当前页在索引树的层位置*/
+#define PAGE_LEVEL					26		/*当前页在索引树的层位置*/
+#define PAGE_INDEX_ID				28		/*page的B+树索引ID*/
 #define PAGE_BTR_SEG_LEAF			36		/*B+树叶子节点所在段的segment header信息，*/
 #define PAGE_BTR_IBUF_FREE_LIST		PAGE_BTR_SEG_LEAF
 #define PAGE_BTR_IBUF_FREE_LIST_NODE PAGE_BTR_SEG_LEAF
