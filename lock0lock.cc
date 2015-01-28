@@ -1051,7 +1051,7 @@ static void lock_rec_move(rec_t* receiver, rec_t* donator)
 	ut_ad(lock_rec_get_first(donator) == NULL);
 }
 
-/*保留同时存在old page和page中的行锁，并重组这些行锁到page对应的行记录上,复杂度O(m * n)*/
+/*保留同时存在old page的行锁，并重组这些行锁到page对应的行记录上,复杂度O(m * n)*/
 void lock_move_reorganize_page(page_t* page, page_t* old_page)
 {
 	lock_t*		lock;
@@ -1241,7 +1241,7 @@ void lock_update_merge_right(rec_t* orig_succ, page_t* left_page)
 	lock_mutex_exit_kernel();
 }
 
-/*锁升级到root page上*/
+/*将root page上的行锁转移到new_page*/
 void lock_update_root_raise(page_t* new_page, page_t* root)
 {
 	lock_mutex_enter_kernel();
