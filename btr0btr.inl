@@ -85,6 +85,7 @@ UNIV_INLINE void btr_page_set_prev(page_t* page, ulint prev, mtr_t* mtr)
 	mlog_write_ulint(page + FIL_PAGE_PREV, next, MLOG_4BYTES, mtr);
 }
 
+/*从node ptr中获取对应孩子的PAGE NO*/
 UNIV_INLINE ulint btr_node_ptr_get_child_page_no(rec_t* rec)
 {
 	ulint	n_fields;

@@ -112,7 +112,7 @@ void btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tup
 	ut_ad(dtuple_check_typed(tuple));
 
 	insert_planned = latch_mode & BTR_INSERT;
-	estimate = latch_mode & BTR_ESTIMATE;
+	estimate = latch_mode & BTR_ESTIMATE;			/*预估计算的动作*/
 	ignore_sec_unique = latch_mode & BTR_IGNORE_SEC_UNIQUE;
 	latch_mode = latch_mode & ~(BTR_INSERT | BTR_ESTIMATE | BTR_IGNORE_SEC_UNIQUE);
 
@@ -121,6 +121,7 @@ void btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tup
 	cursor->flag = BTR_CUR_BINARY;
 	cursor->index = index;
 
+	/*在自适应HASH表中查找*/
 	info = btr_search_get_info(index);
 	guess = info->root_guess;
 
@@ -128,6 +129,7 @@ void btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tup
 	info->n_searches++;
 #endif
 
+	/*在自适应hash中找到了对应的记录*/
 	if (btr_search_latch.writer == RW_LOCK_NOT_LOCKED
 		&& latch_mode <= BTR_MODIFY_LEAF && info->last_hash_succ
 		&& !estimate
@@ -199,6 +201,7 @@ retry_page_get:
 			ut_ad(insert_planned);
 			ut_ad(cursor->thr);
 
+			/*page不能插入到insert buffer中,将会重试,知道page插入到ibuf中*/
 			if(ibuf_should_try(index, ignore_sec_unique) && ibuf_insert(tuple, index, space, page_no, cursor->thr)){
 				cursor->flag = BTR_CUR_INSERT_TO_IBUF;
 				return ;
@@ -244,7 +247,7 @@ retry_page_get:
 		guess = NULL;
 
 		node_ptr = page_cur_get_rec(page_cursor);
-		/*到孩子节点中进行查找*/
+		/*获取孩子节点的page no*/
 		page_no = btr_node_ptr_get_child_page_no(node_ptr);
 	}
 
@@ -253,7 +256,7 @@ retry_page_get:
 		cursor->low_bytes = low_bytes;
 		cursor->up_match = up_match;
 		cursor->up_bytes = up_bytes;
-
+		/*更新自适应HASH索引*/
 		btr_search_info_update(index, cursor);
 
 		ut_ad(cursor->up_match != ULINT_UNDEFINED || mode != PAGE_CUR_GE);
@@ -264,5 +267,130 @@ retry_page_get:
 	if(has_search_latch)
 		rw_lock_s_lock(&btr_search_latch);
 }
+
+/*将btree cursor定位到index索引范围的开始或者末尾，from_left = TRUE，表示定位到最前面*/
+void btr_cur_open_at_index_side(ibool from_left, dict_index_t* index, ulint latch_mode, btr_cur_t* cursor, mtr_t* mtr)
+{
+	page_cur_t*	page_cursor;
+	dict_tree_t*	tree;
+	page_t*		page;
+	ulint		page_no;
+	ulint		space;
+	ulint		height;
+	ulint		root_height;
+	rec_t*		node_ptr;
+	ulint		estimate;
+	ulint       savepoint;
+
+	estimate = latch_mode & BTR_ESTIMATE;
+	latch_mode = latch_mode & ~BTR_ESTIMATE;
+
+	tree = index->tree;
+
+	savepoint = mtr_set_savepoint(mtr);
+	if(latch_mode == BTR_MODIFY_TREE)
+		mtr_x_lock(dict_tree_get_lock(tree), mtr);
+	else
+		mtr_s_lock(dict_tree_get_lock(tree), mtr);
+
+	page_cursor = btr_cur_get_page_cur(cursor);
+	cursor->index = index;
+
+	space = dict_tree_get_space(tree);
+	page_no = dict_tree_get_page(tree);
+
+	height = ULINT_UNDEFINED;
+	for(;;){
+		page = buf_page_get_gen(space, page_no, RW_NO_LATCH, NULL,
+			BUF_GET, IB__FILE__, __LINE__, mtr);
+
+		ut_ad(0 == ut_dulint_cmp(tree->id, btr_page_get_index_id(page)));
+
+		if(height == ULINT_UNDEFINED){
+			height = btr_page_get_level(page, mtr);
+			root_height = height;
+		}
+
+		if(height == 0){
+			btr_cur_latch_leaves(tree, page, space, page_no, latch_mode, cursor, mtr);
+
+			if(latch_mode != BTR_MODIFY_TREE && latch_mode != BTR_CONT_MODIFY_TREE)
+				mtr_release_s_latch_at_savepoint(mtr, savepoint, dict_tree_get_lock(tree));
+		}
+
+		if(from_left) /*从页第一条记录*/
+			page_cur_set_before_first(page, page_cursor);
+		else /*从页的最后一条记录开始*/
+			page_cur_set_after_last(page, page_cursor);
+
+		if(height == 0){
+			if(estimate)
+				btr_cur_add_path_info(cursor, height, root_height);
+			break;
+		}
+
+		ut_ad(height > 0);
+
+		if(from_left)
+			page_cur_move_to_next(page_cursor);
+		else
+			page_cur_move_to_prev(page_cursor);
+
+		if(estimate)
+			btr_cur_add_path_info(cursor, height, root_height);
+
+		height --;
+		node_ptr = page_cur_get_rec(page_cursor);
+
+		page_no = btr_node_ptr_get_child_page_no(node_ptr);
+	}
+}
+
+/*在btree index的管辖范围，随机定位到一个位置*/
+void btr_cur_open_at_rnd_pos(dict_index_t* index, ulint latch_mode, btr_cur_t* cursor, mtr_t* mtr)
+{
+	page_cur_t*	page_cursor;
+	dict_tree_t*	tree;
+	page_t*		page;
+	ulint		page_no;
+	ulint		space;
+	ulint		height;
+	rec_t*		node_ptr;
+
+	tree = index->tree;
+	if(latch_mode == BTR_MODIFY_TREE)
+		mtr_x_lock(dict_tree_get_lock(tree), mtr);
+	else
+		mtr_s_lock(dict_tree_get_lock(tree), mtr);
+
+	page_cursor = btr_cur_get_page_cur(cursor);
+	cursor->index = index;
+
+	space = dict_tree_get_space(tree);
+	page_no = dict_tree_get_page(tree);
+
+	height = ULINT_UNDEFINED;
+	for(;;){
+		page = buf_page_get_gen(space, page_no, RW_NO_LATCH, NULL, BUF_GET, IB__FILE__, __LINE__, mtr);
+		ut_ad(0 == ut_dulint_cmp(tree->id, btr_page_get_index_id(page)));
+
+		if(height == ULINT_UNDEFINED)
+			height = btr_page_get_level(page, mtr);
+
+		if(height == 0)
+			btr_cur_latch_leaves(tree, page, space, page_no, latch_mode, cursor, mtr);
+		/*随机定位一条记录，并将page cursor指向它*/
+		page_cur_open_on_rnd_user_rec(page, page_cursor);	
+		if(height == 0)
+			break;
+
+		ut_ad(height > 0);
+		height --;
+
+		node_ptr = page_cur_get_rec(page_cursor);
+		page_no = btr_node_ptr_get_child_page_no(node_ptr);
+	}
+}
+
 
 
