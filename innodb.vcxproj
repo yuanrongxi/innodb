@@ -75,6 +75,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="btr0btr.inl" />
+    <None Include="btr0cur.inl" />
     <None Include="data0data.inl" />
     <None Include="data0type.inl" />
     <None Include="dyn0dyn.inl" />
@@ -94,6 +95,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="btr0btr.h" />
+    <ClInclude Include="btr0cur.h" />
     <ClInclude Include="btr0types.h" />
     <ClInclude Include="data0data.h" />
     <ClInclude Include="data0type.h" />
@@ -147,6 +149,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="btr0btr.cc" />
+    <ClCompile Include="btr0cur.cc" />
     <ClCompile Include="data0data.cc" />
     <ClCompile Include="data0type.cc" />
     <ClCompile Include="dyn0dyn.cc" />

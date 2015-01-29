@@ -902,8 +902,7 @@ func_start:
 	ut_ad(rw_lock_own(dict_tree_get_lock(tree), RW_LOCK_EX));
 
 	page = btr_cur_get_page(cursor);
-	ut_ad(mtr_memo_contains(mtr, buf_block_align(page),
-		MTR_MEMO_PAGE_X_FIX));
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(page), MTR_MEMO_PAGE_X_FIX));
 	ut_ad(page_get_n_recs(page) >= 2);
 
 	page_no = buf_frame_get_page_no(page);
@@ -1225,6 +1224,7 @@ void btr_compress(btr_cur_t* cursor, mtr_t* mtr)
 	ut_ad(btr_check_node_ptr(tree, merge_page, mtr));
 }
 
+/*·ÏÆúÒ»¸öpage*/
 static void btr_discard_only_page_on_level(dict_tree_t* tree, page_t* page, mtr_t* mtr)
 {
 	rec_t*	node_ptr;
