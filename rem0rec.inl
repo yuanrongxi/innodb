@@ -175,6 +175,13 @@ UNIV_INLINE ibool rec_info_bits_get_deleted_flag(ulint info_bits)
 	return FALSE;
 }
 
+UNIV_INLINE ibool rec_get_deleted_flag(rec_t* rec)
+{
+	if(REC_INFO_DELETED_FLAG & rec_get_info_bits(rec))
+		return TRUE;
+	return FALSE;
+}
+
 UNIV_INLINE void rec_set_deleted_flag(rec_t* rec, ibool flag)
 {
 	ulint	old_val;

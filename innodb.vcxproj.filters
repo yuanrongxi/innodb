@@ -271,7 +271,7 @@
       <Filter>btree</Filter>
     </ClInclude>
     <ClInclude Include="btr0cur.h">
-      <Filter>page</Filter>
+      <Filter>btree</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

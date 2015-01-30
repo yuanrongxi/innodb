@@ -1349,6 +1349,17 @@ void lock_update_delete(rec_t* rec)
 	lock_mutex_exit_kernel();
 }
 
+/*将rec全部移到infimum上*/
+void lock_rec_store_on_page_infimum(rec_t* rec)
+{
+	page_t* page;
+	page = buf_frame_align(rec);
+
+	lock_mutex_enter_kernel();
+	lock_rec_move(page_get_infimum_rec(page), rec);
+	lock_mutex_exit_kernel();
+}
+
 /*将page的infimum记录行锁转移到rec记录上*/
 void lock_rec_restore_from_page_infimum(rec_t* rec, page_t* page)
 {

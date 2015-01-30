@@ -34,6 +34,8 @@ B+Tree 游标实现
 #define BTR_EXTERN_OFFSET			8
 #define BTR_EXTERN_LEN				12
 
+#define BTR_EXTERN_FIELD_REF_SIZE	20
+
 #define BTR_EXTERN_OWNER_FLAG		128
 #define BTR_EXTERN_INHERITED_FLAG	64
 
@@ -72,6 +74,8 @@ ulint							btr_cur_pessimistic_insert(ulint flags, btr_cur_t* cursor, dtuple_t*
 ulint							btr_cur_update_sec_rec_in_place(btr_cur_t* cursor, upd_t* update, que_thr_t* thr, mtr_t* mtr);
 
 ulint							btr_cur_update_in_place(ulint flags, btr_cur_t* cursor, upd_t* update, ulint cmpl_info, que_thr_t* thr, mtr_t* mtr);
+
+ulint							btr_cur_optimistic_insert(ulint flags, btr_cur_t* cursor, dtuple_t* entry, rec_t** rec, big_rec_t** big_rec, que_thr_t* thr, mtr_t* mtr);
 
 ulint							btr_cur_optimistic_update(ulint flags, btr_cur_t* cursor, upd_t* update, ulint cmpl_info, que_thr_t* thr, mtr_t* mtr);
 

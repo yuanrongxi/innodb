@@ -591,7 +591,7 @@ rec_t* btr_root_raise_and_insert(btr_cur_t* cursor, dtuple_t* tuple, mtr_t* mtr)
 	mem_heap_free(heap);
 
 	ibuf_reset_free_bits(UT_LIST_GET_FIRST(tree->tree_indexes), new_page);
-
+	/*重新定位page cursor的指向的位置，也会改变btree cursor，btree_cursor将会指向new page上的对应记录*/
 	page_cur_search(new_page, tuple, PAGE_CUR_LE, page_cursor);
 
 	return btr_page_split_and_insert(cursor, tuple, mtr);

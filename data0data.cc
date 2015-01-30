@@ -406,6 +406,7 @@ big_rec_t* dtuple_convert_big_rec(dict_index_t* index, dtuple_t* entry, ulint* e
 			}
 		}
 
+		/*最大的列数据却不超过127的长度，说明列太多*/
 		if(longest < BTR_EXTERN_FIELD_REF_SIZE + 10 + REC_1BYTE_OFFS_LIMIT){
 			mem_heap_free(heap);
 			return NULL;
