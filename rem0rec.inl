@@ -45,6 +45,7 @@ significant bytes and bits are written below less significant.
 #define REC_1BYTE_SQL_NULL_MASK	0x80
 #define REC_2BYTE_SQL_NULL_MASK	0x8000
 
+/*一列数据被分在多个page中存储*/
 #define REC_2BYTE_EXTERN_MASK	0x4000
 
 

@@ -504,7 +504,7 @@ ibool fil_space_reserve_free_extents(ulint id, ulint n_free_now, ulint n_to_rese
 	return success;
 }
 
-/*Àı–°‘§¡Ù∑∂Œß*/
+/*Àı–°’º”√∑∂Œß*/
 void fil_space_release_free_extents(ulint id, ulint n_reserved)
 {
 	fil_space_t* space;

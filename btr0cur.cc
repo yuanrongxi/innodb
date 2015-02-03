@@ -232,7 +232,7 @@ retry_page_get:
 		}
 		/*在页中进行二分查找对应的记录,这个只是找page node ptr记录*/
 		page_cur_search_with_match(page, tuple, page_mode, &up_match, &up_bytes, &low_match, &low_bytes, page_cursor);
-		if(estimate)
+		if(estimate) /*估算row数*/
 			btr_cur_add_path_info(cursor, height, root_height);
 
 		if(level == height){ /*已经找到对应的层了，不需要深入更低层上*/
@@ -452,7 +452,7 @@ UNIV_INLINE ulint btr_cur_ins_lock_and_undo(ulint flags, btr_cur_t* cursor, dtup
 	return DB_SUCCESS;
 }
 
-/*尝试以乐观锁方式插入记录*/
+/*尝试以乐观式插入记录*/
 ulint btr_cur_optimistic_insert(ulint flags, btr_cur_t* cursor, dtuple_t* entry, rec_t** rec, big_rec_t** big_rec, que_thr_t* thr, mtr_t* mtr)
 {
 	big_rec_t*	big_rec_vec	= NULL;
@@ -590,7 +590,7 @@ calculate_sizes_again:
 	return DB_SUCCESS;
 }
 
-/*以悲观锁执行记录的插入,悲观方式是表空间不够，需要扩大表空间*/
+/*以悲观执行记录的插入,悲观方式是表空间不够，需要扩大表空间*/
 ulint btr_cur_pessimistic_insert(ulint flags, btr_cur_t* cursor, dtuple_t* entry, rec_t** rec, big_rec_t** big_rec, que_thr_t* thr, mtr_t* mtr)
 {
 	dict_index_t*	index = cursor->index;
@@ -1147,7 +1147,7 @@ ulint btr_cur_pessimistic_update(ulint flags, btr_cur_t* cursor, big_rec_t** big
 	else
 		was_first = FALSE;
 
-	/*尝试用乐观式插入tuple*/
+	/*尝试用乐观式插入tuple,这个动作有可能照成*/
 	err = btr_cur_pessimistic_insert(BTR_NO_UNDO_LOG_FLAG
 		| BTR_NO_LOCKING_FLAG
 		| BTR_KEEP_SYS_FLAG, cursor, new_entry, &rec, &dummy_big_rec, NULL, mtr);
@@ -1169,12 +1169,544 @@ ulint btr_cur_pessimistic_update(ulint flags, btr_cur_t* cursor, big_rec_t** big
 	mem_heap_free(heap);
 
 return_after_reservations:
-	if(n_extents > 0)
+	if(n_extents > 0) /*记录只是插入在ibuffer中，并没有刷到磁盘，所以会先标记为未占用状态*/
 		fil_space_release_free_extents(cursor->index->space, n_extents);
 
 	*big_rec = big_rec_vec;
 
 	return err;
 }
+
+/*通过聚集索引删除记录的redo log*/
+UNIV_INLINE void btr_cur_del_mark_set_clust_rec_log(ulint flags, rec_t* rec, dict_index_t* index, ibool val, 
+					trx_t* trx, dulint roll_ptr, mtr_t* mtr)
+{
+	byte* log_ptr;
+	log_ptr = mlog_open(mtr, 30);
+	/*构建一条CLUST DELETE MARK的redo log*/
+	log_ptr = mlog_write_initial_log_record_fast(rec, MLOG_REC_CLUST_DELETE_MARK, log_ptr, mtr); 
+	mach_write_to_1(log_ptr, flags);
+	log_ptr ++;
+	mach_write_to_1(log_ptr, val);
+	log_ptr ++;
+
+	/*将事务的ID和回滚位置写入到redo log中*/
+	log_ptr = row_upd_write_sys_vals_to_log(index, trx, roll_ptr, log_ptr, mtr);
+	mach_write_to_2(log_ptr, rec - buf_frame_align(rec));
+	log_ptr += 2;
+
+	mlog_close(mtr, log_ptr);
+}
+
+/*redo 过程对CLUST DELETE MARK日志的重演*/
+byte* btr_cur_parse_del_mark_set_clust_rec(byte* ptr, byte* end_ptr, page_t* page)
+{
+	ulint	flags;
+	ibool	val;
+	ulint	pos;
+	dulint	trx_id;
+	dulint	roll_ptr;
+	ulint	offset;
+	rec_t*	rec;
+
+	if(end_ptr < ptr + 2)
+		return NULL;
+
+	flags = mach_read_from_1(ptr);
+	ptr++;
+	val = mach_read_from_1(ptr);
+	ptr++;
+
+	ptr = row_upd_parse_sys_vals(ptr, end_ptr, &pos, &trx_id, &roll_ptr);
+	if(ptr == NULL)
+		return NULL;
+
+	if(end_ptr < ptr + 2)
+		return NULL;
+
+	/*获得记录的偏移,可通过这个偏移得到记录的位置*/
+	offset = mach_read_from_2(ptr);
+	ptr += 2;
+
+	if(page != NULL){
+		rec = page + offset;
+		if(!(flags & BTR_KEEP_SYS_FLAG))
+			row_upd_rec_sys_fields_in_recovery(rec, pos, trx_id, roll_ptr);
+
+		/*将记录设置为删除状态*/
+		rec_set_deleted_flag(rec, val);
+	}
+
+	return ptr;
+}
+
+ulint btr_cur_del_mark_set_clust_rec(ulint flags, btr_cur_t* cursor, ibool val, que_thr_t* thr, mtr_t* mtr)
+{
+	dict_index_t*	index;
+	buf_block_t*	block;
+	dulint		roll_ptr;
+	ulint		err;
+	rec_t*		rec;
+	trx_t*		trx;
+
+	rec = btr_cur_get_rec(cursor);
+	index = cursor->index;
+
+	if(btr_cur_print_record_ops && thr){
+		printf("Trx with id %lu %lu going to del mark table %s index %s\n",
+			ut_dulint_get_high(thr_get_trx(thr)->id),
+			ut_dulint_get_low(thr_get_trx(thr)->id),
+			index->table_name, index->name);
+
+		rec_print(rec);
+	}
+
+	ut_ad(index->type & DICT_CLUSTERED);
+	ut_ad(rec_get_deleted_flag(rec) == FALSE);
+
+	/*尝试通过聚集索引获得rec记录行的锁执行权，如果有隐士锁，转换成显示锁*/
+	err = lock_clust_rec_modify_check_and_lock(flags, rec, index, thr);
+	if(err != DB_SUCCESS)
+		return err;
+
+	/*获得事务锁权后,添加undo log日志*/
+	err = trx_undo_report_row_operation(flags, TRX_UNDO_MODIFY_OP, thr,
+		index, NULL, NULL, 0, rec, &roll_ptr);
+	if(err != DB_SUCCESS)
+		return err;
+
+	block = buf_block_align(rec);
+
+	if(block->is_hashed)
+		rw_lock_x_lock(&btr_search_latch);
+
+	/*对记录做删除标识*/
+	rec_set_deleted_flag(rec, val);
+
+	trx = thr_get_trx(thr);
+	if(!(flags & BTR_KEEP_SYS_FLAG)){
+		row_upd_rec_sys_fields(&btr_search_latch);
+	}
+
+	if(block->is_hashed)
+		rw_lock_x_unlock(&btr_search_latch);
+
+	/*记录redo log日志*/
+	btr_cur_del_mark_set_clust_rec_log(flags, rec, index, val, trx, roll_ptr, mtr);
+
+	return DB_SUCCESS;
+}
+
+/*写入通过二级索引删除记录的redo log*/
+UNIV_INLINE void btr_cur_del_mark_set_sec_rec_log(rec_t* rec, ibool val, mtr_t* mtr)
+{
+	byte* log_ptr;
+
+	log_ptr = mlog_open(mtr, 30);
+	/*加入一条SEC DELETE MARK删除记录的redo log*/
+	log_ptr =  mlog_write_initial_log_record_fast(rec, MLOG_REC_SEC_DELETE_MARK, log_ptr, mtr);
+	mach_write_to_1(log_ptr, val);
+	log_ptr ++;
+
+	mach_write_to_2(log_ptr, rec - buf_frame_align(rec));
+	log_ptr += 2;
+
+	mlog_close(mtr, log_ptr);
+}
+
+/*重演SEC DELETE MARK日志*/
+byte* btr_cur_parse_del_mark_set_sec_rec(byte* ptr, byte* end_ptr, page_t* page)
+{
+	ibool	val;
+	ulint	offset;
+	rec_t*	rec;
+
+	if(end_ptr < ptr + 3)
+		return NULL;
+
+	val = mach_read_from_1(ptr);
+	ptr ++;
+
+	offset = mach_read_from_2(ptr);
+	ptr += 2;
+
+	ut_a(offset <= UNIV_PAGE_SIZE);
+	if(page){
+		rec = page + offset;
+		rec_set_deleted_flag(rec, val);
+	}
+
+	return ptr;
+}
+
+/*通过二级索引删除记录*/
+ulint btr_cur_del_mark_set_sec_rec(ulint flags, btr_cur_t* cursor, ibool val, que_thr_t* thr, mtr_t* mtr)
+{
+	buf_block_t*	block;
+	rec_t*		rec;
+	ulint		err;
+
+	rec = btr_cur_get_rec(cursor);
+
+	if (btr_cur_print_record_ops && thr) {
+		printf("Trx with id %lu %lu going to del mark table %s index %s\n",
+			ut_dulint_get_high(thr_get_trx(thr)->id),
+			ut_dulint_get_low(thr_get_trx(thr)->id),
+			cursor->index->table_name, cursor->index->name);
+		rec_print(rec);
+	}
+
+	err = lock_sec_rec_modify_check_and_lock(flags, rec, cursor->index, thr);
+	if(err != DB_SUCCESS)
+		return err;
+
+	block = buf_block_align(rec);
+
+	if(block->is_hashed)
+		rw_lock_x_lock(&btr_search_latch);
+
+	rec_set_deleted_flag(rec, val);
+
+	if(block->is_hashed)
+		rw_lock_x_unlock(&btr_search_latch);
+
+	btr_cur_del_mark_set_sec_rec_log(rec, val, mtr);
+
+	return DB_SUCCESS;
+}
+
+/*直接从IBUF中删除*/
+void btr_cur_del_unmark_for_ibuf(rec_t* rec, mtr_t* mtr)
+{
+	rec_set_deleted_flag(rec, FALSE);
+	btr_cur_del_mark_set_sec_rec_log(rec, FALSE, mtr);
+}
+
+/*尝试压缩合并一个btree上的叶子节点page*/
+void btr_cur_compress(btr_cur_t* cursor, mtr_t* mtr)
+{
+	ut_ad(mtr_memo_contains(mtr, dict_tree_get_lock(btr_cur_get_tree(cursor)), MTR_MEMO_X_LOCK));
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(btr_cur_get_page(cursor)), MTR_MEMO_PAGE_X_FIX));
+	ut_ad(btr_page_get_level(btr_cur_get_page(cursor), mtr) == 0);
+
+	btr_compress(cursor, mtr);
+}
+
+/*判断是否可以进行page compress,如果能，进行btree page compress*/
+ibool btr_cur_compress_if_useful(btr_cur_t* cursor, mtr_t* mtr)
+{
+	ut_ad(mtr_memo_contains(mtr, dict_tree_get_lock(btr_cur_get_tree(cursor)), MTR_MEMO_X_LOCK));
+	ut_ad(mtr_memo_contains(mtr, buf_block_align( btr_cur_get_page(cursor)), MTR_MEMO_PAGE_X_FIX));
+	/*根据填充因子判断是否需要对cursor指向的叶子节点*/
+	if(btr_cur_compress_recommendation(cursor, mtr)){
+		btr_compress(cursor, mtr);
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+/*乐观式删除，不涉及IO操作*/
+ibool btr_cur_optimistic_delete(btr_cur_t* cursor, mtr_t* mtr)
+{
+	page_t*	page;
+	ulint	max_ins_size;
+
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(btr_cur_get_page(cursor)), MTR_MEMO_PAGE_X_FIX));
+
+	page = btr_cur_get_page(cursor);
+	ut_ad(btr_page_get_level(page, mtr) == 0);
+
+	/*如果一个列被分在多个页中存储的话，暂时不做删除，因为涉及到多页合并会触发IO操作*/
+	if(rec_contains_externally_stored_field(btr_cur_get_rec(cursor)))
+		return FALSE;
+
+	/*删除cursor不会触发page的compress*/
+	if(btr_cur_can_delete_without_compress(cursor, mtr)){
+		/*记录删除后，行锁会转移到后面一行上*/
+		lock_update_delete(btr_cur_get_rec(cursor));
+		btr_search_update_hash_on_delete(cursor);
+
+		max_ins_size = page_get_max_insert_size_after_reorganize(page, 1);
+		/*记录删除*/
+		page_cur_delete_rec(btr_cur_get_page_cur(cursor), mtr);
+		/*更新ibuf对应的page状态*/
+		ibuf_update_free_bits_low(cursor->index, page, max_ins_size, mtr);
+		
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+/*悲观式删除,涉及表空间的改变*/
+ibool btr_cur_pessimistic_delete(ulint* err, ibool has_reserved_extents, btr_cur_t* cursor, ibool in_roolback, mtr_t* mtr)
+{
+	page_t*		page;
+	dict_tree_t*	tree;
+	rec_t*		rec;
+	dtuple_t*	node_ptr;
+	ulint		n_extents	= 0;
+	ibool		success;
+	ibool		ret		= FALSE;
+	mem_heap_t*	heap;
+
+	page = btr_cur_get_page(cursor);
+	tree = btr_cur_get_tree(cursor);
+
+	ut_ad(mtr_memo_contains(mtr, dict_tree_get_lock(tree), MTR_MEMO_X_LOCK));
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(page), MTR_MEMO_PAGE_X_FIX));
+
+	if(!has_reserved_extents){
+		n_extents = cursor->tree_height / 32 + 1;
+		success = fsp_reserve_free_extents(cursor->index->space, n_extents, FSP_CLEANING, mtr);
+		if(!success){
+			*err = DB_OUT_OF_FILE_SPACE;
+			return FALSE;
+		}
+	}
+
+	/*是否列夸页存储的页*/
+	btr_rec_free_externally_stored_fields(cursor->index, btr_cur_get_rec(cursor), in_roolback, mtr);
+
+	/*page中只有1条记录，并且cursor索引指向的页不是cursor当前指向的page,有可能是列太大分开存储占用的页,page进行废弃*/
+	if(page_get_n_recs(page) < 2 && dict_tree_get_page(btr_cur_get_tree(cursor)) != buf_frame_get_page_no(page)){
+		btr_discard_page(cursor, mtr);
+		*err = DB_SUCCESS;
+		ret = TRUE;
+
+		goto return_after_reservations;
+	}
+
+	rec = btr_cur_get_rec(cursor);
+	/*行锁转移到rec的下一条记录*/
+	lock_update_delete(rec);
+
+	/*page不是处于叶子节点上，而且处于第一条记录上*/
+	if(btr_page_get_level(page, mtr) > 0 && page_rec_get_next(page_get_infimum_rec(page)) == rec){
+		if(btr_page_get_prev(page, mtr) == FIL_NULL) /*前面没有兄弟页，那么第一条记录必须为min rec*/
+			btr_set_min_rec_mark(page_rec_get_next(rec), mtr);
+		else{
+			/*先将page的node ptr从父亲节点上删除*/
+			btr_node_ptr_delete(tree, page, mtr);
+
+			heap = mem_heap_create(256);
+			/*将rec的下一条记录的key作为node ptr里的新的值插入到父亲节点上*/
+			node_ptr = dict_tree_build_node_ptr(tree, page_rec_get_next(rec), buf_frame_get_page_no(page), heap, btr_page_get_level(page, mtr));
+			btr_insert_on_non_leaf_level(tree, btr_page_get_level(page, mtr) + 1, node_ptr, mtr);
+
+			mem_heap_free(heap);
+		}
+	}
+
+	btr_search_update_hash_on_delete(cursor);
+	/*删除记录*/
+	page_cur_delete_rec(btr_cur_get_page_cur(cursor), mtr);
+
+	ut_ad(btr_check_node_ptr(tree, page, mtr));
+	*err = DB_SUCCESS;
+
+return_after_reservations:
+	if(!ret) /*进行合并判断,如果条件满足就会触发合并*/
+		ret = btr_cur_compress_if_useful(cursor, mtr);
+
+	if(n_extents > 0)
+		fil_space_release_free_extents(cursor->index->space, n_extents);
+
+	return ret;
+}
+
+static void btr_cur_add_path_info(btr_cur_t* cursor, ulint height, ulint root_height)
+{
+	btr_path_t*	slot;
+	rec_t*		rec;
+
+	ut_a(cursor->path_arr);
+
+	if(root_height >= BTR_PATH_ARRAY_N_SLOTS - 1){ /*root 的层高*/
+		slot = cursor->path_arr;
+		slot->nth_rec = ULINT_UNDEFINED;
+		return ;
+	}
+
+	if(height == 0){  
+		slot = cursor->path_arr + root_height + 1;
+		slot->nth_rec = ULINT_UNDEFINED;
+	}
+
+	rec = btr_cur_get_rec(cursor);
+	slot = cursor->path_arr + (root_height - height);
+
+	slot->nth_rec = page_rec_get_n_recs_before(rec);
+	slot->n_recs = page_get_n_recs(buf_frame_align(rec));
+}
+
+/*估算tuple1 tuple2之间的记录行数，只是近似值，不是精确值*/
+ib_longlong btr_estimate_n_rows_in_range(dict_index_t* index, dtuple_t* tuple1, ulint mode1, dtuple_t* tuple2, ulint mode2)
+{
+	btr_path_t	path1[BTR_PATH_ARRAY_N_SLOTS];
+	btr_path_t	path2[BTR_PATH_ARRAY_N_SLOTS];
+	btr_cur_t	cursor;
+	btr_path_t*	slot1;
+	btr_path_t*	slot2;
+	ibool		diverged;
+	ibool       diverged_lot;
+	ulint       divergence_level;           
+	ib_longlong	n_rows;
+	ulint		i;
+	mtr_t		mtr;
+
+	mtr_start(&mtr);
+
+	cursor.path_arr = path1;
+	if(dtuple_get_n_fields(tuple1) > 0){
+		/*将cursor定位到与tuple1索引相同的page记录上,并将*/
+		btr_cur_search_to_nth_level(index, 0, tuple1, mode1, BTR_SEARCH_LEAF | BTR_ESTIMATE, &cursor, 0, &mtr);
+	}
+	else{
+		btr_cur_open_at_index_side(TRUE, index, BTR_SEARCH_LEAF | BTR_ESTIMATE, &cursor, &mtr);
+	}
+
+	mtr_commit(&mtr);
+
+	mtr_start(&mtr);
+
+	cursor.path_arr = path2;
+	if(dtuple_get_n_fields(tuple2) > 0){
+		btr_cur_search_to_nth_level(index, 0, tuple2, mode2, BTR_SEARCH_LEAF | BTR_ESTIMATE, &cursor, 0, &mtr);
+	}
+	else{
+		btr_cur_open_at_index_side(FALSE, index, BTR_SEARCH_LEAF | BTR_ESTIMATE, &cursor, &mtr);
+	}
+
+	mtr_commit(&mtr);
+
+	n_rows = 1;
+	diverged = FALSE;
+	diverged_lot = FALSE;
+
+	divergence_level = 1000000;
+
+	for(i = 0; ; i ++){
+		ut_ad(i < BTR_PATH_ARRAY_N_SLOTS);
+
+		slot1 = path1 + i;
+		slot2 = path2 + i;
+
+		/*已经计算到叶子节点了*/
+		if(slot1->nth_rec == ULINT_UNDEFINED || slot2->nth_rec == ULINT_UNDEFINED){
+			if(i > divergence_level + 1)
+				n_rows = n_rows * 2;
+
+			if(n_rows > index->table->stat_n_rows / 2){
+				n_rows = index->table->stat_n_rows / 2;
+				if(n_rows == 0)
+					n_rows = index->table->stat_n_rows;
+			}
+
+			return n_rows;
+		}
+
+		if(!diverged && slot1->nth_rec != slot2->nth_rec){
+			diverged = TRUE;
+			if(slot1->nth_rec < slot2->nth_rec){ /*计算root page上的相隔的页数*/
+				n_rows = slot2->nth_rec - slot1->nth_rec;
+				if(n_rows > 1){
+					diverged_lot = TRUE;
+					divergence_level = i;
+				}
+			}
+			else /*如果tuple2在tuple1前面，那么返回一个象征性的值10*/
+				return 10;
+		}
+		else if(diverged && !diverged_lot){ /*在同一页中,只统计差距*/
+			if (slot1->nth_rec < slot1->n_recs || slot2->nth_rec > 1) {
+
+				diverged_lot = TRUE;
+				divergence_level = i;
+
+				n_rows = 0;
+
+				if (slot1->nth_rec < slot1->n_recs) {
+					n_rows += slot1->n_recs - slot1->nth_rec;
+				}
+
+				if (slot2->nth_rec > 1) {
+					n_rows += slot2->nth_rec - 1;
+				}
+			}
+		}
+		else if(diverged_lot)/*在不同页中，统计相隔页中所有的数据作为评估值*/
+			n_rows = (n_rows * (slot1->n_recs + slot2->n_recs)) / 2;
+	}
+}
+
+/*统计key值不同的个数，就是Cardinality的值*/
+void btr_estimate_number_of_different_key_vals(dict_index_t* index)
+{
+	btr_cur_t	cursor;
+	page_t*		page;
+	rec_t*		rec;
+	ulint		n_cols;
+	ulint		matched_fields;
+	ulint		matched_bytes;
+	ulint*		n_diff;
+	ulint		not_empty_flag	= 0;
+	ulint		total_external_size = 0;
+	ulint		i;
+	ulint		j;
+	ulint		add_on;
+	mtr_t		mtr;
+
+	/*计算索引列的数量*/
+	n_cols = dict_index_get_n_unique(index);
+	n_diff = mem_alloc((n_cols + 1) * sizeof(ib_longlong));
+	for(j = 0; j <= n_cols; j ++)
+		n_diff[j] = 0;
+
+	/*进行随机取8个页作为采样,统计不同记录的个数*/
+	for(i = 0; i < BTR_KEY_VAL_ESTIMATE_N_PAGES; i ++){
+		mtr_start(&mtr);
+		btr_cur_open_at_rnd_pos(index, BTR_SEARCH_LEAF, &cursor, &mtr);
+
+		page = btr_cur_get_page(&cursor);
+		rec = page_get_infimum_rec(page);
+		rec = page_rec_get_next(rec);
+
+		if(rec != page_get_supremum_rec(page))
+			not_empty_flag = 1;
+
+		while(rec != page_get_supremum_rec(page) && page_rec_get_next(rec) != page_get_supremum_rec(page)){
+			matched_fields = 0;
+			matched_bytes = 0;
+
+			cmp_rec_rec_with_match(rec, page_rec_get_next(rec), index, &matched_fields, &matched_bytes);
+			for (j = matched_fields + 1; j <= n_cols; j++)
+				n_diff[j]++;
+
+			total_external_size += btr_rec_get_externally_stored_len(rec);
+
+			rec = page_rec_get_next(rec);
+		}
+
+		total_external_size += btr_rec_get_externally_stored_len(rec);
+		mtr_commit(&mtr);
+	}
+	/*进行*/
+	for(j = 0; j <= n_cols; j ++){
+		index->stat_n_diff_key_vals[j] =
+			(n_diff[j] * index->stat_n_leaf_pages + BTR_KEY_VAL_ESTIMATE_N_PAGES - 1 + total_external_size + not_empty_flag) / (BTR_KEY_VAL_ESTIMATE_N_PAGES + total_external_size);
+
+		add_on = index->stat_n_leaf_pages / (10 * (BTR_KEY_VAL_ESTIMATE_N_PAGES + total_external_size));
+
+		if(add_on > BTR_KEY_VAL_ESTIMATE_N_PAGES)
+			add_on = BTR_KEY_VAL_ESTIMATE_N_PAGES;
+
+		index->stat_n_diff_key_vals[j] += add_on;
+	}
+
+	mem_free(n_diff);
+}
+
 
 

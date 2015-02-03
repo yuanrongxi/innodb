@@ -1224,7 +1224,7 @@ void btr_compress(btr_cur_t* cursor, mtr_t* mtr)
 	ut_ad(btr_check_node_ptr(tree, merge_page, mtr));
 }
 
-/*废弃一个page*/
+/*废弃一个page,将行锁作用到上一层节点上*/
 static void btr_discard_only_page_on_level(dict_tree_t* tree, page_t* page, mtr_t* mtr)
 {
 	rec_t*	node_ptr;

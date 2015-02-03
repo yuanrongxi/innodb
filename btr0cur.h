@@ -129,8 +129,8 @@ ulint							btr_push_update_extern_fields(ulint* ext_vect, rec_t* rec, upd_t* up
 
 typedef struct btr_path_struct
 {
-	ulint		nth_rec;
-	ulint		n_recs;
+	ulint		nth_rec;		/*记录在页的位置*/
+	ulint		n_recs;			/*这个页拥有的记录数*/
 }btr_path_t;
 
 struct btr_cur_struct
@@ -148,7 +148,7 @@ struct btr_cur_struct
 	ulint				n_fields;
 	ulint				n_bytes;
 	ulint				fold;
-	btr_path_t*			path_arr;
+	btr_path_t*			path_arr;		/*path的数组，存有记录的统计信息，用于估算两记录之间存在的记录数*/
 };
 
 #include "btr0cur.inl"
