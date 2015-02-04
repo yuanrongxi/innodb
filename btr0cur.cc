@@ -1692,7 +1692,7 @@ void btr_estimate_number_of_different_key_vals(dict_index_t* index)
 		total_external_size += btr_rec_get_externally_stored_len(rec);
 		mtr_commit(&mtr);
 	}
-	/*进行*/
+	/*进行平均计算*/
 	for(j = 0; j <= n_cols; j ++){
 		index->stat_n_diff_key_vals[j] =
 			(n_diff[j] * index->stat_n_leaf_pages + BTR_KEY_VAL_ESTIMATE_N_PAGES - 1 + total_external_size + not_empty_flag) / (BTR_KEY_VAL_ESTIMATE_N_PAGES + total_external_size);
@@ -1708,5 +1708,503 @@ void btr_estimate_number_of_different_key_vals(dict_index_t* index)
 	mem_free(n_diff);
 }
 
+/*获得rec额外占用的页数*/
+static ulint btr_rec_get_externally_stored_len(rec_t* rec)
+{
+	ulint	n_fields;
+	byte*	data;
+	ulint	local_len;
+	ulint	extern_len;
+	ulint	total_extern_len = 0;
+	ulint	i;
+
+	if(rec_get_data_size(rec) <= REC_1BYTE_OFFS_LIMIT)
+		return 0;
+
+	n_fields = rec_get_n_fields(rec);
+	for(i = 0; i < n_fields; i ++){
+		data = rec_get_nth_field(rec, i, &local_len);
+		local_len -= BTR_EXTERN_FIELD_REF_SIZE;
+		extern_len = mach_read_from_4(data + local_len + BTR_EXTERN_LEN + 4); /*或的列的总长度？*/
+
+		total_extern_len += ut_calc_align(extern_len, UNIV_PAGE_SIZE);
+	}
+
+	return total_extern_len / UNIV_PAGE_SIZE;
+}
+
+/*设置外部存储列的ownership位*/
+static void btr_cur_set_ownership_of_extern_field(rec_t* rec, ulint i, ibool val, mtr_t* mtr)
+{
+	byte*	data;
+	ulint	local_len;
+	ulint	byte_val;
+
+	data = rec_get_nth_field(rec, i, &local_len);
+	ut_a(local_len >= BTR_EXTERN_FIELD_REF_SIZE);
+
+	local_len -= BTR_EXTERN_FIELD_REF_SIZE;
+
+	byte_val = mach_read_from_1(data + local_len + BTR_EXTERN_LEN);
+	if(val)
+		byte_val = byte_val & (~BTR_EXTERN_OWNER_FLAG);
+	else
+		byte_val = byte_val | BTR_EXTERN_OWNER_FLAG;
+
+	mlog_write_ulint(data + local_len + BTR_EXTERN_LEN, byte_val, MLOG_1BYTE, mtr);
+}
+
+void btr_cur_mark_extern_inherited_fields(rec_t* rec, upd_t* update, mtr_t* mtr)
+{
+	ibool	is_updated;
+	ulint	n;
+	ulint	j;
+	ulint	i;
+
+	n = rec_get_n_fields(rec);
+
+	for(i = 0; i < n; i++){
+		if (rec_get_nth_field_extern_bit(rec, i)){
+			is_updated = FALSE;
+
+			if(update){
+				for(j = 0; j < upd_get_n_fields(update); j ++){
+					if(upd_get_nth_field(update, j)->field_no = i)
+						is_updated = TRUE;
+				}
+			}
+
+			/*取消owership位*/
+			if(!is_updated)
+				btr_cur_set_ownership_of_extern_field(rec, i, FALSE, mtr);
+		}
+	}
+}
+
+void btr_cur_mark_dtuple_inherited_extern(dtuple_t* entry, ulint* ext_vec, ulint n_ext_vec, upd_t* update)
+{
+	dfield_t* dfield;
+	ulint	byte_val;
+	byte*	data;
+	ulint	len;
+	ibool	is_updated;
+	ulint	j;
+	ulint	i;
+
+	if(ext_vec = NULL)
+		return ;
+
+	for(i = 0; i < n_ext_vec; i ++){
+		is_updated = FALSE;
+
+		for(j = 0; j < upd_get_n_fields(update); j ++){
+			if(upd_get_nth_field(update, j)->field_no == ext_vec[i])
+				is_updated = TRUE;
+		}
+
+		/*设置extern继承标识*/
+		if(!is_updated){
+			dfield = dtuple_get_nth_field(entry, ext_vec[i]);
+			data = dfield_get_data(dfield);
+			len = dfield_get_len(dfield);
+
+			len -= BTR_EXTERN_FIELD_REF_SIZE;
+
+			byte_val = mach_read_from_1(data + len + BTR_EXTERN_LEN);
+			byte_val = byte_val | BTR_EXTERN_INHERITED_FLAG;
+
+			mach_write_to_1(data + len + BTR_EXTERN_LEN, byte_val);
+		}
+	}
+}
+
+void btr_cur_unmark_extern_fields(rec_t* rec, mtr_t* mtr)
+{
+	ulint n, i;
+
+	n = rec_get_n_fields(rec);
+	for(i = 0; i < n; i ++){
+		if(rec_get_nth_field_extern_bit(rec, i)) /*设置列的ownership位*/
+			btr_cur_set_ownership_of_extern_field(rec, i, TRUE, mtr);
+	}
+}
+
+/*取消tuple对应列的ownership位*/
+void btr_cur_unmark_dtuple_extern_fields(dtuple_t* entry, ulint* ext_vec, ulint n_ext_vec)
+{
+	dfield_t* dfield;
+	ulint	byte_val;
+	byte*	data;
+	ulint	len;
+	ulint	i;
+
+	for(i = 0; i < n_ext_vec; i ++){
+		dfield = dtuple_get_nth_field(entry, ext_vec[i]);
+
+		data = dfield_get_data(dfield);
+		len = dfield_get_len(dfield);
+
+		len -= BTR_EXTERN_FIELD_REF_SIZE;
+
+		byte_val = mach_read_from_1(data + len + BTR_EXTERN_LEN);
+		byte_val = byte_val & ~BTR_EXTERN_OWNER_FLAG;
+
+		/*取消ownership位*/
+		mach_write_to_1(data + len + BTR_EXTERN_LEN, byte_val);
+	}
+}
+
+ulint btr_push_update_extern_fields(ulint* ext_vect, rec_t* rec, upd_t* update)
+{
+	ulint	n_pushed	= 0;
+	ibool	is_updated;
+	ulint	n;
+	ulint	j;
+	ulint	i;
+
+	/*计算update中改变的列ID*/
+	if(update){
+		n = upd_get_n_fields(update);
+
+		for (i = 0; i < n; i++) {
+			if (upd_get_nth_field(update, i)->extern_storage){
+				ext_vect[n_pushed] =upd_get_nth_field(update, i)->field_no;
+				n_pushed++;
+			}
+		}
+	}
+
+	/*计算rec被改变的列ID*/
+	n = rec_get_n_fields(rec);
+	for(i = 0; i < n; i ++){
+		if(rec_get_nth_field_extern_bit(rec, i)){
+			is_updated = FALSE;
+			if (update) {
+				for (j = 0; j < upd_get_n_fields(update); j++) {
+						if (upd_get_nth_field(update, j)->field_no == i)
+								is_updated = TRUE;
+				}
+			}
+
+			if(!is_updated){
+				ext_vect[n_pushed] = i;
+				n_pushed ++;
+			}
+		}
+	}
+
+	return n_pushed;
+}
+
+/*获得blob列的长度*/
+static ulint btr_blob_get_part_len(byte* blob_header)
+{
+	return mach_read_from_4(blob_header + BTR_BLOB_HDR_PART_LEN);
+}
+
+/*获得存有blob数据的下一页ID*/
+static ulint btr_blob_get_next_page_no(byte* blob_header)
+{
+	return mach_read_from_4(blob_header + BTR_BLOB_HDR_NEXT_PAGE_NO);
+}
+
+/*存储big rec的列*/
+ulint btr_store_big_rec_extern_fields(dict_index_t* index, rec_t* rec, big_rec_t* big_rec_vec, mtr_t* mtr)
+{
+	byte*	data;
+	ulint	local_len;
+	ulint	extern_len;
+	ulint	store_len;
+	ulint	page_no;
+	page_t*	page;
+	ulint	space_id;
+	page_t*	prev_page;
+	page_t*	rec_page;
+	ulint	prev_page_no;
+	ulint	hint_page_no;
+	ulint	i;
+	mtr_t	mtr;
+
+	ut_ad(mtr_memo_contains(local_mtr, dict_tree_get_lock(index->tree), MTR_MEMO_X_LOCK));
+	ut_ad(mtr_memo_contains(local_mtr, buf_block_align(data), MTR_MEMO_PAGE_X_FIX));
+	ut_a(index->type & DICT_CLUSTERED);
+
+	space_id = buf_frame_get_space_id(rec);
+
+	for(i = 0; i < big_rec_vec->n_fields; i ++){
+		data = rec_get_nth_field(rec, big_rec_vec->fields[i].field_no, &local_len);
+
+		ut_a(local_len >= BTR_EXTERN_FIELD_REF_SIZE);
+		local_len -= BTR_EXTERN_FIELD_REF_SIZE;
+
+		extern_len = big_rec_vec->fields[i].len;
+
+		ut_a(extern_len > 0);
+		prev_page_no = FIL_NULL;
+
+		while(extern_len > 0){
+			mtr_start(&mtr);
+
+			/*定位分配页的hint id*/
+			if(prev_page_no = FIL_NULL)
+				hint_page_no = buf_frame_get_page_no(rec) + 1;
+			else
+				hint_page_no = prev_page_no + 1;
+
+			/*在btree 分配一个page*/
+			page = btr_page_alloc(index->tree, hint_page_no, FSP_NO_DIR, 0, &mtr);
+			if(page == NULL){
+				mtr_commit(&mtr);
+				return DB_OUT_OF_FILE_SPACE;
+			}
+
+			page_no = buf_frame_get_page_no(page);
+			if(prev_page_no != FIL_NULL){
+				prev_page = buf_page_get(space_id, prev_page_no, RW_X_LATCH, &mtr);
+
+				buf_page_dbg_add_level(prev_page, SYNC_EXTERN_STORAGE);
+				/*将page no写入到前一页的BTR_BLOB_HDR_NEXT_PAGE_NO中*/
+				mlog_write_ulint(prev_page + FIL_PAGE_DATA + BTR_BLOB_HDR_NEXT_PAGE_NO, page_no, MLOG_4BYTES, &mtr);
+			}
+
+			/*确定存储的数据长度*/
+			if(extern_len > (UNIV_PAGE_SIZE - FIL_PAGE_DATA - BTR_BLOB_HDR_SIZE - FIL_PAGE_DATA_END))
+				store_len = UNIV_PAGE_SIZE - FIL_PAGE_DATA - BTR_BLOB_HDR_SIZE - FIL_PAGE_DATA_END;
+			else
+				store_len = extern_len;
+			/*将数据写入到page中*/
+			mlog_write_string(page + FIL_PAGE_DATA + BTR_BLOB_HDR_SIZE, big_rec_vec->fields[i].data + big_rec_vec->fields[i].len - extern_len,
+				store_len, &mtr);
+
+			/*写入blob列存储在本页的数据长度*/
+			mlog_write_ulint(page + FIL_PAGE_DATA + BTR_BLOB_HDR_PART_LEN, store_len, MLOG_4BYTES, &mtr);
+			/*因为还不能确定需要更多的页存储本列，所以这里暂时填写FIL_NULL,当下一个页生成时，会更新此值*/
+			mlog_write_ulint(page + FIL_PAGE_DATA+ BTR_BLOB_HDR_NEXT_PAGE_NO,FIL_NULL, MLOG_4BYTES, &mtr);
+
+			extern_len -= store_len;
+			rec_page = buf_page_get(space_id, buf_frame_get_page_no(data), RW_X_LATCH, &mtr);
+
+			buf_page_dbg_add_level(rec_page, SYNC_NO_ORDER_CHECK);
+
+			mlog_write_ulint(data + local_len + BTR_EXTERN_LEN, 0, MLOG_4BYTES, &mtr);
+			mlog_write_ulint(data + local_len + BTR_EXTERN_LEN + 4, big_rec_vec->fields[i].len - extern_len, MLOG_4BYTES, &mtr);
+			
+			/*写入field起始的页位置信息(space id, page no, offset)到对应rec列上*/
+			if(prev_page_no == FIL_NULL){
+				mlog_write_ulint(data + local_len
+					+ BTR_EXTERN_SPACE_ID, space_id, MLOG_4BYTES, &mtr);
+
+				mlog_write_ulint(data + local_len
+					+ BTR_EXTERN_PAGE_NO, page_no, MLOG_4BYTES, &mtr);
+
+				mlog_write_ulint(data + local_len
+					+ BTR_EXTERN_OFFSET, FIL_PAGE_DATA, MLOG_4BYTES, &mtr);
+
+				/*设置一个列多个页存储的标识*/
+				rec_set_nth_field_extern_bit(rec, big_rec_vec->fields[i].field_no,TRUE, &mtr);
+			}
+
+			prev_page_no = page_no;
+			mtr_commit(&mtr);
+		}
+	}
+
+	return DB_SUCCESS;
+}
+
+/*将blob占用的page释放*/
+void btr_free_externally_stored_field(dict_index_t* index, byte* data, ulint local_len, ibool do_not_free_inherited, mtr_t* local_mtr)
+{
+	page_t*	page;
+	page_t*	rec_page;
+	ulint	space_id;
+	ulint	page_no;
+	ulint	offset;
+	ulint	extern_len;
+	ulint	next_page_no;
+	ulint	part_len;
+	mtr_t	mtr;
+
+	ut_a(local_len >= BTR_EXTERN_FIELD_REF_SIZE);
+	ut_ad(mtr_memo_contains(local_mtr, dict_tree_get_lock(index->tree), MTR_MEMO_X_LOCK));
+	ut_ad(mtr_memo_contains(local_mtr, buf_block_align(data), MTR_MEMO_PAGE_X_FIX));
+
+	local_len -= BTR_EXTERN_FIELD_REF_SIZE;
+	for(;;){
+		mtr_start(&mtr);
+
+		/*找到记录所在的页*/
+		rec_page = buf_page_get(buf_frame_get_space_id(data), buf_frame_get_page_no(data), RW_X_LATCH, &mtr);
+		buf_page_dbg_add_level(rec_page, SYNC_NO_ORDER_CHECK);
+
+		space_id = mach_read_from_4(data + local_len + BTR_EXTERN_SPACE_ID);
+		page_no = mach_read_from_4(data + local_len + BTR_EXTERN_PAGE_NO);
+		offset = mach_read_from_4(data + local_len + BTR_EXTERN_OFFSET);
+
+		/*获得外部数据长度*/
+		extern_len = mach_read_from_4(data + local_len + BTR_EXTERN_LEN + 4);
+		if(extern_len == 0){
+			mtr_commit(&mtr);
+			return ;
+		}
+
+		/*记录列没有将数据分到其他页上存储*/
+		if(mach_read_from_1(data + local_len + BTR_EXTERN_LEN) & BTR_EXTERN_OWNER_FLAG){
+			mtr_commit(&mtr);
+			return ;
+		}
+
+		/*已经被回滚了，不需要free*/
+		if(do_not_free_inherited &&  mach_read_from_1(data + local_len + BTR_EXTERN_LEN) & BTR_EXTERN_INHERITED_FLAG){
+			mtr_commit(&mtr);
+			return;
+		}
+
+		page = buf_page_get(space_id, page_no, RW_X_LATCH, &mtr);
+		buf_page_dbg_add_level(page, SYNC_EXTERN_STORAGE);
+
+		/*获得下一个页ID*/
+		next_page_no = mach_read_from_4(page + FIL_PAGE_DATA + BTR_BLOB_HDR_NEXT_PAGE_NO);
+		part_len = btr_blob_get_part_len(page + FIL_PAGE_DATA);
+
+		ut_a(extern_len >= part_len);
+
+		/*释放blob列占用的页*/
+		btr_page_free_low(index->tree, page, 0, &mtr);
+
+		mlog_write_ulint(data + local_len + BTR_EXTERN_PAGE_NO, next_page_no, MLOG_4BYTES, &mtr);
+		mlog_write_ulint(data + local_len + BTR_EXTERN_LEN + 4, extern_len - part_len, MLOG_4BYTES, &mtr);
+
+		/*对blob列完整性的判断*/
+		if(next_page_no == FIL_NULL)
+			ut_a(extern_len - part_len == 0);
+
+		if(extern_len - part_len == 0)
+			ut_a(next_page_no == FIL_NULL);
+
+		mtr_commit(&mtr);
+	}
+}
+
+/*释放rec中所有blob列占用的页空间*/
+void btr_rec_free_externally_stored_fields(dict_index_t* index, rec_t* rec, ibool do_not_free_inherited, mtr_t* mtr)
+{
+	ulint	n_fields;
+	byte*	data;
+	ulint	len;
+	ulint	i;
+
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(rec), MTR_MEMO_PAGE_X_FIX));
+
+	if(rec_get_data_size(rec) <= REC_1BYTE_OFFS_LIMIT)
+		return;
+
+	n_fields = rec_get_n_fields(rec);
+	for(i = 0; i < n_fields; i ++){
+		if (rec_get_nth_field_extern_bit(rec, i)){
+			data = rec_get_nth_field(rec, i, &len);
+			btr_free_externally_stored_field(index, data, len, do_not_free_inherited, mtr);
+		}
+	}
+}
+
+/*对update中的blob field占用的页进行释放*/
+static void btr_rec_free_updated_extern_fields(dict_index_t* index, rec_t* rec, upd_t* update, ibool do_not_free_inherited, mtr_t* mtr)
+{
+	upd_field_t*	ufield;
+	ulint		n_fields;
+	byte*		data;
+	ulint		len;
+	ulint		i;
+
+	ut_ad(mtr_memo_contains(mtr, buf_block_align(rec), MTR_MEMO_PAGE_X_FIX));
+
+	if(rec_get_data_size(rec) < REC_1BYTE_OFFS_LIMIT)
+		return ;
+
+	n_fields = upd_get_n_fields(update);
+
+	for (i = 0; i < n_fields; i++) {
+		ufield = upd_get_nth_field(update, i);
+
+		if (rec_get_nth_field_extern_bit(rec, ufield->field_no)) {
+			data = rec_get_nth_field(rec, ufield->field_no, &len);
+			btr_free_externally_stored_field(index, data, len, do_not_free_inherited, mtr);
+		}
+	}
+}
+
+/*对大列进行拷贝*/
+byte* btr_copy_externally_stored_field(ulint* len, byte* data, ulint local_len, mem_heap_t* heap)
+{
+	page_t*	page;
+	ulint	space_id;
+	ulint	page_no;
+	ulint	offset;
+	ulint	extern_len;
+	byte*	blob_header;
+	ulint	part_len;
+	byte*	buf;
+	ulint	copied_len;
+	mtr_t	mtr;
+
+	ut_a(local_len >= BTR_EXTERN_FIELD_REF_SIZE);
+
+	local_len -= BTR_EXTERN_FIELD_REF_SIZE;
+	/*获得blob占用页的位置*/
+	space_id = mach_read_from_4(data + local_len + BTR_EXTERN_SPACE_ID);
+	page_no = mach_read_from_4(data + local_len + BTR_EXTERN_PAGE_NO);
+	offset = mach_read_from_4(data + local_len + BTR_EXTERN_OFFSET);
+
+	extern_len = mach_read_from_4(data + local_len + BTR_EXTERN_LEN + 4);
+	buf = mem_heap_alloc(heap, local_len + extern_len);
+	/*先拷贝field index*/
+	ut_memcpy(buf, data, local_len);
+	copied_len = local_len;
+	if (extern_len == 0){
+		*len = copied_len;
+		return(buf);
+	}
+
+	for(;;){
+		mtr_start(&mtr);
+
+		page = buf_page_get(space_id, page_no, RW_X_LATCH, &mtr);
+		buf_page_dbg_add_level(page, SYNC_EXTERN_STORAGE);
+
+		blob_header = page + offset;
+		part_len = btr_blob_get_part_len(blob_header);
+		/*拷贝field data*/
+		ut_memcpy(buf + copied_len, blob_header + BTR_BLOB_HDR_SIZE, part_len);
+		copied_len += part_len;
+
+		/*获得下一个page的ID*/
+		page_no = btr_blob_get_next_page_no(blob_header);
+
+		offset = FIL_PAGE_DATA;
+
+		mtr_commit(&mtr);
+		/*已经没有更多存有blob列数据的页了，拷贝完成*/
+		if (page_no == FIL_NULL) {
+			ut_a(copied_len == local_len + extern_len);
+			*len = copied_len;
+			return(buf);
+		}
+
+		ut_a(copied_len < local_len + extern_len);
+	}
+}
+
+/*拷贝rec中第no列的数据，这个一定是BLOB列*/
+byte* btr_rec_copy_externally_stored_field(rec_t* rec, ulint no, ulint* len, mem_heap_t* heap)
+{
+	ulint	local_len;
+	byte*	data;
+
+	ut_a(rec_get_nth_field_extern_bit(rec, no));
+
+	data = rec_get_nth_field(rec, no, &local_len);
+	return btr_copy_externally_stored_field(len, data, local_len, heap);
+}
 
 
