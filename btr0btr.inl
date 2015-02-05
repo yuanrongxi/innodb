@@ -71,6 +71,7 @@ UNIV_INLINE void btr_page_set_next(page_t* page, ulint next, mtr_t* mtr)
 	mlog_write_ulint(page + FIL_PAGE_NEXT, next, MLOG_4BYTES, mtr);
 }
 
+/*获得上一个page的page_no,因为BTREE是叶子节点是一个双向链表*/
 UNIV_INLINE ulint btr_page_get_prev(page_t* page, mtr_t* mtr)
 {
 	ut_ad(page && mtr);
@@ -101,7 +102,7 @@ UNIV_INLINE ulint btr_node_ptr_get_child_page_no(rec_t* rec)
 }
 
 /*释放这叶子节点所持有的latch*/
-UNIV_INLINE void btr_leaf_page_release(page_t* page, ulint latch_mode)
+UNIV_INLINE void btr_leaf_page_release(page_t* page, ulint latch_mode, mtr_t* mtr)
 {
 	ut_ad(!mtr_memo_contains(mtr, buf_block_align(page), MTR_MEMO_MODIFY));
 

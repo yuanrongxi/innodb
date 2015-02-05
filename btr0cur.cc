@@ -80,7 +80,7 @@ static void btr_cur_latch_leaves(dict_tree_t* tree, page_t* page, ulint space, u
 		ut_error;
 }
 
-void btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tuple, ulint latch_mode,
+void btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tuple, ulint mode, ulint latch_mode,
 	btr_cur_t* cursor, ulint has_search_latch, mtr_t* mtr)
 {
 	dict_tree_t*	tree;

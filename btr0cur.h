@@ -61,7 +61,7 @@ UNIV_INLINE dict_tree_t*		btr_cur_get_tree(btr_cur_t* cursor);
 
 UNIV_INLINE void				btr_cur_position(dict_index_t* index, rec_t* rec, btr_cur_t* cursor);
 
-void							btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tuple, ulint latch_mode, 
+void							btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tuple, ulint mode, ulint latch_mode, 
 																btr_cur_t* cursor, ulint has_search_latch, mtr_t* mtr);
 
 void							btr_cur_open_at_index_side(ibool from_left, dict_index_t* index, ulint latch_mode, btr_cur_t* cursor, mtr_t* mtr);
@@ -141,7 +141,7 @@ struct btr_cur_struct
 	que_thr_t			thr;
 	ulint				flag;			/* BTR_CUR_HASH, BTR_CUR_HASH_FAIL,BTR_CUR_BINARY, or BTR_CUR_INSERT_TO_IBUF */
 	ulint				tree_height;
-	ulint				up_match;
+	ulint				up_match;			
 	ulint				up_bytes;
 	ulint				low_match;
 	ulint				low_bytes;
