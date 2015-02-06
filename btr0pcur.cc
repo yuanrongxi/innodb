@@ -184,9 +184,8 @@ ibool btr_pcur_restore_position(ulint latch_mode, btr_pcur_t* cursor, mtr_t* mtr
 	cursor->old_stored = BTR_PCUR_OLD_STORED;
 
 	cursor->search_mode = old_mode;
-	/*tuple与cursor执行的记录是一致的内容,只需要跟新下modify clock*/
-	if (cursor->rel_pos == BTR_PCUR_ON && btr_pcur_is_on_user_rec(cursor, mtr)
-		&& 0 == cmp_dtuple_rec(tuple, btr_pcur_get_rec(cursor))){
+	/*tuple与cursor执行的记录是一致的内容,只需要更新下modify clock*/
+	if (cursor->rel_pos == BTR_PCUR_ON && btr_pcur_is_on_user_rec(cursor, mtr) && 0 == cmp_dtuple_rec(tuple, btr_pcur_get_rec(cursor))){
 			cursor->modify_clock = buf_frame_get_modify_clock(buf_frame_buf(btr_pcur_get_rec(cursor)));
 			mem_heap_free(heap);
 
@@ -275,7 +274,7 @@ void btr_pcur_move_backward_from_page(btr_pcur_t* cursor, mtr_t* mtr)
 	}
 
 	btr_pcur_store_position(cursor, mtr);
-
+	/*redo log会刷盘*/
 	mtr_commit(mtr);
 
 	mtr_start(mtr);
@@ -292,7 +291,7 @@ void btr_pcur_move_backward_from_page(btr_pcur_t* cursor, mtr_t* mtr)
 		btr_leaf_page_release(page, latch_mode, mtr);
 		page_cur_set_after_last(prev_page, btr_pcur_get_page_cur(cursor));
 	}
-	else if(prev_page_no != FIL_NULL){
+	else if(prev_page_no != FIL_NULL){ /*可能是向后移动,3.2版本中好像没有支持啊,根本不会触发到*/
 		prev_page = btr_pcur_get_btr_cur(cursor)->left_page;
 		btr_leaf_page_release(prev_page, latch_mode, mtr);
 	}

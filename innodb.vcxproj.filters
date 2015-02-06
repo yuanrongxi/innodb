@@ -118,6 +118,9 @@
     <None Include="btr0pcur.inl">
       <Filter>btree</Filter>
     </None>
+    <None Include="btr0sea.inl">
+      <Filter>btree</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -279,6 +282,9 @@
     <ClInclude Include="btr0pcur.h">
       <Filter>btree</Filter>
     </ClInclude>
+    <ClInclude Include="btr0sea.h">
+      <Filter>btree</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -408,6 +414,9 @@
       <Filter>btree</Filter>
     </ClCompile>
     <ClCompile Include="btr0pcur.cc">
+      <Filter>btree</Filter>
+    </ClCompile>
+    <ClCompile Include="btr0sea.cc">
       <Filter>btree</Filter>
     </ClCompile>
   </ItemGroup>
