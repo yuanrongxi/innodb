@@ -43,9 +43,9 @@ struct btr_search_struct
 
 	ulint						hash_analysis;
 	ibool						last_hash_succ;
-	ulint						n_hash_potential;
+	ulint						n_hash_potential;	/*连续用自适应hash查找成功的个数*/
 	ulint						n_fields;
-	ulint						n_types;
+	ulint						n_bypes;
 	ulint						side;
 
 	ulint						n_hash_succ;
