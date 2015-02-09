@@ -636,7 +636,7 @@ ulint btr_cur_pessimistic_insert(ulint flags, btr_cur_t* cursor, dtuple_t* entry
 	}
 
 	if (dict_tree_get_page(index->tree) == buf_frame_get_page_no(page))
-			*rec = btr_root_raise_and_insert(cursor, entry, mtr);
+		*rec = btr_root_raise_and_insert(cursor, entry, mtr);
 	else
 		*rec = btr_page_split_and_insert(cursor, entry, mtr);
 	
