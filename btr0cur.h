@@ -147,7 +147,7 @@ struct btr_cur_struct
 	ulint				low_bytes;
 	ulint				n_fields;
 	ulint				n_bytes;
-	ulint				fold;
+	ulint				fold;			/*对应记录列的fold hash,主要用于hash索引*/
 	btr_path_t*			path_arr;		/*path的数组，存有记录的统计信息，用于估算两记录之间存在的记录数*/
 };
 

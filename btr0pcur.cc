@@ -301,7 +301,7 @@ void btr_pcur_move_backward_from_page(btr_pcur_t* cursor, mtr_t* mtr)
 }
 
 /*移向pcursor指向的前一条记录*/
-ibool btr_pcur_move_to_prev(btr_pcur_t*	cursor,mtr_t* mtr)	
+ibool btr_pcur_move_to_prev(btr_pcur_t*	cursor, mtr_t* mtr)	
 {
 	ut_ad(cursor->pos_state == BTR_PCUR_IS_POSITIONED);
 	ut_ad(cursor->latch_mode != BTR_NO_LATCHES);

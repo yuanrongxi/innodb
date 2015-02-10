@@ -27,15 +27,15 @@
 #define BTR_PCUR_OLD_STORED				908467085
 #define BTR_PCUR_OLD_NOT_STORED			122766467
 
-/*BTree cursor的状态结构信息*/
+/*BTree persistent cursor的状态结构信息*/
 struct btr_pcur_struct
 {
 	btr_cur_t			btr_cur;			/*btree游标*/
 	ulint				latch_mode;			/*latch 模式，x-latch s-latch*/
-	ulint				old_stored;
-	rec_t*				old_rec;
-	ulint				rel_pos;
-	dulint				modify_clock;
+	ulint				old_stored;			/*BTR_PCUR_OLD_STORED/BTR_PCUR_OLD_NOT_STORED,表示是否存有上一条记录的标识*/
+	rec_t*				old_rec;			
+	ulint				rel_pos;			/*BTR_PCUR_ON, BTR_PCUR_BEFORE, or BTR_PCUR_AFTER,old cursor页位置方向标识*/
+	dulint				modify_clock;		/*store old rec时ibuf的modify clock*/
 	ulint				pos_state;			/*BTR_PCUR_IS_POSITIONED..*/
 	ulint				search_mode;		/*搜索方式：PAGE_CUR_G..*/
 	mtr_t*				mtr;				/*mini trancation*/
