@@ -15,7 +15,7 @@ struct thr_local_struct
 	os_thread_id_t		id;			/*线程ID*/
 	os_thread_t			handle;		/*线程句柄*/
 	ulint				slot_no;	/**/
-	ibool				in_ibuf;
+	ibool				in_ibuf;	/*ibuf标识*/
 	hash_node_t			hash;
 	ulint				magic_n;	/*魔法字*/
 };

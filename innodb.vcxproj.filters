@@ -59,6 +59,9 @@
     <Filter Include="btree">
       <UniqueIdentifier>{456b1edd-9baf-41fa-8450-e2a6ad861c7c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ibuf">
+      <UniqueIdentifier>{8d5bf571-dc20-45bb-83ab-44714c020c34}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -120,6 +123,9 @@
     </None>
     <None Include="btr0sea.inl">
       <Filter>btree</Filter>
+    </None>
+    <None Include="ibuf0ibuf.inl">
+      <Filter>ibuf</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -285,6 +291,12 @@
     <ClInclude Include="btr0sea.h">
       <Filter>btree</Filter>
     </ClInclude>
+    <ClInclude Include="ibuf0types.h">
+      <Filter>ibuf</Filter>
+    </ClInclude>
+    <ClInclude Include="ibuf0ibuf.h">
+      <Filter>ibuf</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -418,6 +430,9 @@
     </ClCompile>
     <ClCompile Include="btr0sea.cc">
       <Filter>btree</Filter>
+    </ClCompile>
+    <ClCompile Include="ibuf0ibuf.cc">
+      <Filter>ibuf</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
