@@ -812,7 +812,7 @@ static void ibuf_remove_free_page(ulint space, ibuf_data_t* ibuf_data)
 	ibuf_exit();
 }
 
-/*释放space对应的ibuf_data中过剩的page,每次调用这个函数会释放4个page*/
+/*释放space对应的ibuf_data中过剩的page,每次调用这个函数会释放4个page,在表空间分配页的时候会调用此函数*/
 void ibuf_free_excess_pages(ulint space)
 {
 	ibuf_data_t*	ibuf_data;

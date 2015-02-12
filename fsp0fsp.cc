@@ -1328,7 +1328,7 @@ ulint fseg_alloc_free_page_general(fseg_header_t* seg_header, ulint hint, byte d
 	latch = fil_space_get_latch(space);
 	mtr_x_lock(latch, mtr);
 
-	if(rw_lock_get_x_lock_count(latch) == 1){
+	if(rw_lock_get_x_lock_count(latch) == 1){ /*只有当前这个线程持有latch,可以试探性的尝试释放ibuf中的空闲页*/
 		ibuf_free_excess_pages(space);
 	}
 
