@@ -11,24 +11,24 @@ extern ulint		ibuf_flush_count;
 
 struct ibuf_data_struct
 {
-	ulint			space;
-	ulint			seg_size;
-	ulint			size;
-	ibool			empty;
-	ulint			free_list_len;
-	ulint			height;
-	dict_index_t*	index;
+	ulint			space;		/*对应记录的table space id*/
+	ulint			seg_size;	/*ibuf_data管理的page数量,表空间分配给ibuf_data的page数量*/
+	ulint			size;		/*ibuf btree占用的page数量*/
+	ibool			empty;		/*无任何缓冲记录标识*/
+	ulint			free_list_len; /*ibuf_data可利用的空闲page*/
+	ulint			height;		/*ibuf btree高度*/
+	dict_index_t*	index;		/*ibuf 索引对象*/
 	UT_LIST_NODE_T(ibuf_data_t) data_list;
 
-	ulint			n_inserts;
-	ulint			n_merges;
-	ulint			n_merged_recs;
+	ulint			n_inserts;	/*插入到ibuf_data的次数*/
+	ulint			n_merges;	/*ibuf被merge的次数*/
+	ulint			n_merged_recs; /*从ibuf中被合并到辅助索引页中的记录总数*/
 };
 
 struct ibuf_struct
 {
-	ulint			size;
-	ulint			max_size;
+	ulint			size;		/*当前ibuf占用page空间数*/
+	ulint			max_size;	/*最大可以占用的内存空间数*/
 	ulint			meter;
 	UT_LIST_BASE_NODE_T(ibuf_data_t) data_list;
 };
@@ -60,7 +60,7 @@ UNIV_INLINE ibool  ibuf_bitmap_page(ulint page_no)
 }
 
 /*Translates the free space on a page to a value in the ibuf bitmap.将空余空间转化为IBUF_BITMAP_FREE上的值:
- 0	-	页无空间
+ 0	-	剩余页空间小于512B,也有可能没有任何空间
  1	-	剩余空间大于1/32 page_size
  2	-	剩余空间大于1/16 page_size
  3  -	剩余空间大于1/8 page_size*/

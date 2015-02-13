@@ -127,7 +127,7 @@ ulint fil_space_get_type(ulint id)
 	return (space->purpose);
 }
 
-ibuf_data_t* fil_sapce_get_ibuf_data(ulint id)
+ibuf_data_t* fil_space_get_ibuf_data(ulint id)
 {
 	fil_space_t* space;
 	fil_system_t* sys = fil_system;

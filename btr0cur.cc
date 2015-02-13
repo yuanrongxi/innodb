@@ -1375,7 +1375,7 @@ ulint btr_cur_del_mark_set_sec_rec(ulint flags, btr_cur_t* cursor, ibool val, qu
 	return DB_SUCCESS;
 }
 
-/*直接从IBUF中删除*/
+/*记录设置为删除状态，这个是为ibuf插入记录所调用的*/
 void btr_cur_del_unmark_for_ibuf(rec_t* rec, mtr_t* mtr)
 {
 	rec_set_deleted_flag(rec, FALSE);

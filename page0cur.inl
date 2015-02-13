@@ -82,7 +82,7 @@ UNIV_INLINE ulint page_cur_search(page_t* page, dtuple_t* tuple, ulint mode, pag
 	ut_ad(dtuple_check_typed(tuple));
 
 	page_cur_search_with_match(page, tuple, mode, &up_matched_fields, &up_matched_bytes,
-		&low_matched_fields, &low_matched_bytes);
+		&low_matched_fields, &low_matched_bytes, cursor);
 
 	return low_matched_fields;
 }
