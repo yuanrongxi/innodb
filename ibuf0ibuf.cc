@@ -775,6 +775,7 @@ static void ibuf_remove_free_page(ulint space, ibuf_data_t* ibuf_data)
 		return;
 	}
 
+	/*启用另外一个mini transaction是为了防止死锁！*/
 	mtr_start(&mtr2);
 
 	root = ibuf_tree_root_get(ibuf_data, space, &mtr2);

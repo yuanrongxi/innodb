@@ -78,6 +78,7 @@
     <None Include="btr0cur.inl" />
     <None Include="btr0pcur.inl" />
     <None Include="btr0sea.inl" />
+    <None Include="buf0buf.inl" />
     <None Include="data0data.inl" />
     <None Include="data0type.inl" />
     <None Include="dyn0dyn.inl" />
@@ -102,6 +103,8 @@
     <ClInclude Include="btr0pcur.h" />
     <ClInclude Include="btr0sea.h" />
     <ClInclude Include="btr0types.h" />
+    <ClInclude Include="buf0buf.h" />
+    <ClInclude Include="buf0types.h" />
     <ClInclude Include="data0data.h" />
     <ClInclude Include="data0type.h" />
     <ClInclude Include="data0types.h" />
@@ -159,6 +162,7 @@
     <ClCompile Include="btr0cur.cc" />
     <ClCompile Include="btr0pcur.cc" />
     <ClCompile Include="btr0sea.cc" />
+    <ClCompile Include="buf0buf.cc" />
     <ClCompile Include="data0data.cc" />
     <ClCompile Include="data0type.cc" />
     <ClCompile Include="dyn0dyn.cc" />
