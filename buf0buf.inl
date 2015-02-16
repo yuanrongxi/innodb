@@ -21,7 +21,7 @@ UNIV_INLINE ulint buf_pool_get_curr_size()
 }
 
 /*获得缓冲池最大空间大小，在mysql的配置文件中为buffer_pool_size的配置*/
-UNIV_INLINE buf_block_t* buf_pool_get_max_size()
+UNIV_INLINE ulint buf_pool_get_max_size()
 {
 	return buf_pool->max_size * UNIV_PAGE_SIZE;
 }

@@ -12,6 +12,7 @@
 #include "btr0types.h"
 #include "mtr0mtr.h"
 #include "ha0ha.h"
+#include "page0types.h"
 
 /* 搜索信息方向*/
 #define BTR_SEA_NO_DIRECTION	1

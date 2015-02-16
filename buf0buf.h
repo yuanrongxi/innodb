@@ -1,5 +1,5 @@
-#ifndef __buf0buf_h_
-#define __buf0buf_h_
+#ifndef __buf0buf_hi_
+#define __buf0buf_hi_
 
 #include "univ.h"
 #include "fil0fil.h"
@@ -35,6 +35,7 @@
 /*block magic value*/
 #define BUF_BLOCK_MAGIC_N	41526563
 
+typedef struct buf_block_struct buf_block_t;
 /*buf_block_t的定义*/
 struct buf_block_struct
 {
@@ -61,8 +62,8 @@ struct buf_block_struct
 	ulint						LRU_position;
 	ulint						freed_page_clock;
 	ibool						old;
-	ibool						accessed;
-	ulint						buf_fix_count;
+	ibool						accessed;		/*block是否被buffer pool缓冲过，如果没有accessed = FALSE*/
+	ulint						buf_fix_count;  /**/
 	ulint						io_fix;			/*是否有IO操作正在对block对应的page做操作*/
 
 	dulint						modify_clock;
@@ -83,7 +84,7 @@ struct buf_block_struct
 };
 
 /*buf_pool_t定义*/
-struct buf_pool_struct
+typedef struct buf_pool_t
 {
 	mutex_t						mutex;
 	byte*						frame_mem;
@@ -120,7 +121,7 @@ struct buf_pool_struct
 	UT_LIST_BASE_NODE_T(buf_block_t) LRU;
 	buf_block_t*				LRU_old;
 	ulint						LRU_old_len;
-};
+}buf_pool_t;
 
 /************************宏封装函数****************************************************
 NOTE! The following macros should be used instead of buf_page_get_gen,
@@ -171,8 +172,8 @@ buf_frame_t*					buf_page_get_gen(ulint space, ulint offset, ulint rw_latch, buf
 buf_frame_t*					buf_page_create(ulint space, ulint offset, mtr_t* mtr);
 UNIV_INLINE void				buf_page_release(buf_block_t* block, ulint rw_latch, mtr_t* mtr);
 void							buf_page_make_young(buf_frame_t* frame);
-ibool							buf_page_seek(ulint space, ulint offset);
-buf_block_t*					buf_page_seek_block(ulint space, ulint offset);
+ibool							buf_page_peek(ulint space, ulint offset);
+buf_block_t*					buf_page_peek_block(ulint space, ulint offset);
 buf_block_t*					buf_page_set_file_page_was_freed(ulint space, ulint offset);
 buf_block_t*					buf_page_reset_file_page_was_freed(ulint space, ulint offset);
 
