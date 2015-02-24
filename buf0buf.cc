@@ -666,6 +666,7 @@ buf_block_t* buf_page_init_for_read(ulint mode, ulint space, ulint offset)
 	block->io_fix = BUF_IO_READ;
 	block->n_pend_reads ++;
 
+	/*在buf_page_io_complete时会将lock和read_lock释放*/
 	rw_lock_x_lock_gen(&(block->lock), BUF_IO_READ);
 	rw_lock_x_lock_gen(&(block->read_lock), BUF_IO_READ);
 
@@ -677,6 +678,8 @@ buf_block_t* buf_page_init_for_read(ulint mode, ulint space, ulint offset)
 	return block;
 }
 
+/*建立一个page与buf_pool block之间的对应关系，并且会放入LRU队列中，通常这个过程是不需要从磁盘中导入页数据的，
+一般是将block state有NO_USED-->FILE_PAGE*/
 buf_frame_t* buf_page_create(ulint space, ulint offset, mtr_t* mtr)
 {
 	buf_frame_t*	frame;
@@ -687,7 +690,7 @@ buf_frame_t* buf_page_create(ulint space, ulint offset, mtr_t* mtr)
 
 	free_block = buf_LRU_get_free_block();
 
-	/*进行ibuf中数据记录的删除
+	/*进行ibuf中数据记录的删除,只是个初始化过程，不是一个从磁盘导入页数据的过程
 	Delete possible entries for the page from the insert buffer:
 	such can exist if the page belonged to an index which was dropped*/
 	ibuf_merge_or_delete_for_page(NULL, space, offset);
@@ -727,5 +730,422 @@ buf_frame_t* buf_page_create(ulint space, ulint offset, mtr_t* mtr)
 	frame = block->frame;
 
 	return frame;
+}
+
+/*从磁盘上读或者写一个页数据完成*/
+void buf_page_io_complete(buf_block_t* block)
+{
+	dict_index_t*	index;
+	dulint		id;
+	ulint		io_type;
+	ulint		read_page_no;
+
+	ut_ad(block);
+
+	io_type = block->io_fix;
+	if(io_type == BUF_IO_READ){
+		read_page_no = mach_read_from_4(block->frame + FIL_PAGE_OFFSET);
+		if(read_page_no != 0 && trx_doublewrite_age_inside(read_page_no) && read_page_no != block->offset){
+			fprintf(stderr,"InnoDB: Error: page n:o stored in the page read in is %lu, should be %lu!\n",
+			read_page_no, block->offset);
+		}
+
+		/*判断页是否完整*/
+		if(buf_page_is_corrupted(block->frame)){
+			fprintf(stderr,
+				"InnoDB: Database page corruption on disk or a failed\n"
+				"InnoDB: file read of page %lu.\n", block->offset);
+
+			fprintf(stderr, "InnoDB: You may have to recover from a backup.\n");
+
+			buf_page_print(block->frame);
+
+			fprintf(stderr, "InnoDB: Database page corruption on disk or a failed\n"
+				"InnoDB: file read of page %lu.\n", block->offset);
+
+			fprintf(stderr, "InnoDB: You may have to recover from a backup.\n");
+			fprintf(stderr,
+				"InnoDB: It is also possible that your operating\n"
+				"InnoDB: system has corrupted its own file cache\n"
+				"InnoDB: and rebooting your computer removes the\n"
+				"InnoDB: error.\n"
+				"InnoDB: If the corrupt page is an index page\n"
+				"InnoDB: you can also try to fix the corruption\n"
+				"InnoDB: by dumping, dropping, and reimporting\n"
+				"InnoDB: the corrupt table. You can use CHECK\n"
+				"InnoDB: TABLE to scan your table for corruption.\n"
+				"InnoDB: Look also at section 6.1 of\n"
+				"InnoDB: http://www.innodb.com/ibman.html about\n"
+				"InnoDB: forcing recovery.\n");
+
+			if(srv_force_recovery < SRV_FORCE_IGNORE_CORRUPT){
+				fprintf(stderr, "InnoDB: Ending processing because of a corrupt database page.\n");
+				exit(1);
+			}
+		}
+
+		/*正在redo log恢复过程*/
+		if(recv_recovery_is_on())
+			recv_recover_page(FALSE, TRUE, block->frame, block->space, block->offset);
+
+		/*进行ibuf中的记录合并*/
+		if(!recv_no_ibuf_operations)
+			ibuf_merge_or_delete_for_page(block->frame, block->space, block->offset);
+	}
+
+	mutex_enter(&(buf_pool->mutex));
+
+	/*更新block与buf_pool的计数状态*/
+	block->io_fix = 0;
+	if(io_type == BUF_IO_READ){
+		ut_ad(buf_pool->n_pend_reads > 0);
+
+		buf_pool->n_pend_reads--;
+		buf_pool->n_pages_read++;
+
+		/*在发起读的时候进行也lock*/
+		rw_lock_x_unlock_gen(&(block->lock), BUF_IO_READ);
+		rw_lock_x_unlock_gen(&(block->read_lock), BUF_IO_READ);
+
+		if(buf_debug_prints)
+			printf("Has read ");
+	}
+	else{
+		ut_ad(io_type == BUF_IO_WRITE);
+		/*page磁盘写完成*/
+		buf_flush_write_complete(block);
+
+		rw_lock_s_unlock_gen(&(block->lock), BUF_IO_WRITE);
+
+		buf_pool->n_pages_written ++;
+
+		if(buf_debug_prints)
+			printf("Has written ");
+	}
+
+	mutex_exit(&(buf_pool->mutex));
+
+	if (buf_debug_prints) {
+		printf("page space %lu page no %lu", block->space, block->offset);
+		id = btr_page_get_index_id(block->frame);
+
+		index = NULL;
+
+		printf("\n");
+	}
+}
+
+void buf_pool_invalidate(void)
+{
+	ibool	freed;
+
+	ut_ad(buf_all_freed());
+
+	freed = TRUE;
+	while (freed)
+		freed = buf_LRU_search_and_free_block(0);
+
+	mutex_enter(&(buf_pool->mutex));
+
+	ut_ad(UT_LIST_GET_LEN(buf_pool->LRU) == 0);
+
+	mutex_exit(&(buf_pool->mutex));
+}
+
+ibool buf_validate(void)
+{
+	buf_block_t*	block;
+	ulint		i;
+	ulint		n_single_flush	= 0;
+	ulint		n_lru_flush	= 0;
+	ulint		n_list_flush	= 0;
+	ulint		n_lru		= 0;
+	ulint		n_flush		= 0;
+	ulint		n_free		= 0;
+	ulint		n_page		= 0;
+
+	ut_ad(buf_pool);
+
+	mutex_enter(&(buf_pool->mutex));
+
+	for (i = 0; i < buf_pool->curr_size; i++) {
+
+		block = buf_pool_get_nth_block(buf_pool, i);
+
+		if (block->state == BUF_BLOCK_FILE_PAGE) {
+			ut_a(buf_page_hash_get(block->space, block->offset) == block);
+			n_page++;
+
+			if (block->io_fix == BUF_IO_WRITE) {
+				if (block->flush_type == BUF_FLUSH_LRU){
+					n_lru_flush++;
+					ut_a(rw_lock_is_locked(&(block->lock), RW_LOCK_SHARED));
+				}
+				else if (block->flush_type == BUF_FLUSH_LIST)
+						n_list_flush++;
+				else if (block->flush_type == BUF_FLUSH_SINGLE_PAGE)
+						n_single_flush++;
+				else
+					ut_error;
+			} 
+			else if (block->io_fix == BUF_IO_READ)
+				ut_a(rw_lock_is_locked(&(block->lock), RW_LOCK_EX));
+
+			n_lru++;
+
+			if (ut_dulint_cmp(block->oldest_modification, ut_dulint_zero) > 0)
+					n_flush++;
+
+		} else if (block->state == BUF_BLOCK_NOT_USED) {
+			n_free++;
+		}
+	}
+
+	if (n_lru + n_free > buf_pool->curr_size) {
+		printf("n LRU %lu, n free %lu\n", n_lru, n_free);
+		ut_error;
+	}
+
+	ut_a(UT_LIST_GET_LEN(buf_pool->LRU) == n_lru);
+	if (UT_LIST_GET_LEN(buf_pool->free) != n_free) {
+		printf("Free list len %lu, free blocks %lu\n", UT_LIST_GET_LEN(buf_pool->free), n_free);
+		ut_error;
+	}
+	ut_a(UT_LIST_GET_LEN(buf_pool->flush_list) == n_flush);
+
+	ut_a(buf_pool->n_flush[BUF_FLUSH_SINGLE_PAGE] == n_single_flush);
+	ut_a(buf_pool->n_flush[BUF_FLUSH_LIST] == n_list_flush);
+	ut_a(buf_pool->n_flush[BUF_FLUSH_LRU] == n_lru_flush);
+
+	mutex_exit(&(buf_pool->mutex));
+
+	ut_a(buf_LRU_validate());
+	ut_a(buf_flush_validate());
+
+	return(TRUE);
+}	
+
+void buf_print(void)
+{
+	dulint*		index_ids;
+	ulint*		counts;
+	ulint		size;
+	ulint		i;
+	ulint		j;
+	dulint		id;
+	ulint		n_found;
+	buf_frame_t* 	frame;
+	dict_index_t*	index;
+
+	ut_ad(buf_pool);
+
+	size = buf_pool_get_curr_size() / UNIV_PAGE_SIZE;
+
+	index_ids = mem_alloc(sizeof(dulint) * size);
+	counts = mem_alloc(sizeof(ulint) * size);
+
+	mutex_enter(&(buf_pool->mutex));
+
+	printf("buf_pool size %lu \n", size);
+	printf("database pages %lu \n", UT_LIST_GET_LEN(buf_pool->LRU));
+	printf("free pages %lu \n", UT_LIST_GET_LEN(buf_pool->free));
+	printf("modified database pages %lu \n", UT_LIST_GET_LEN(buf_pool->flush_list));
+
+	printf("n pending reads %lu \n", buf_pool->n_pend_reads);
+
+	printf("n pending flush LRU %lu list %lu single page %lu\n",
+		buf_pool->n_flush[BUF_FLUSH_LRU],
+		buf_pool->n_flush[BUF_FLUSH_LIST], buf_pool->n_flush[BUF_FLUSH_SINGLE_PAGE]);
+
+	printf("pages read %lu, created %lu, written %lu\n",
+		buf_pool->n_pages_read, buf_pool->n_pages_created, buf_pool->n_pages_written);
+
+	/* Count the number of blocks belonging to each index in the buffer */
+
+	n_found = 0;
+
+	for (i = 0 ; i < size; i++)
+		counts[i] = 0;
+
+	for (i = 0; i < size; i++) {
+		frame = buf_pool_get_nth_block(buf_pool, i)->frame;
+
+		if (fil_page_get_type(frame) == FIL_PAGE_INDEX) {
+			id = btr_page_get_index_id(frame);
+			/* Look for the id in the index_ids array */
+			j = 0;
+
+			while (j < n_found){
+				if (ut_dulint_cmp(index_ids[j], id) == 0){
+					(counts[j])++;
+					break;
+				}
+				j++;
+			}
+
+			if (j == n_found) {
+				n_found++;
+				index_ids[j] = id;
+				counts[j] = 1;
+			}
+		}
+	}
+
+	mutex_exit(&(buf_pool->mutex));
+
+	for (i = 0; i < n_found; i++) {
+		index = dict_index_get_if_in_cache(index_ids[i]);
+
+		printf("Block count for index %lu in buffer is about %lu",
+			ut_dulint_get_low(index_ids[i]), counts[i]);
+
+		if (index)
+			printf(" index name %s table %s", index->name, index->table->name);
+
+		printf("\n");
+	}
+
+	mem_free(index_ids);
+	mem_free(counts);
+
+	ut_a(buf_validate());
+}
+
+ulint buf_get_n_pending_ios(void)
+{
+	return(buf_pool->n_pend_reads + buf_pool->n_flush[BUF_FLUSH_LRU]
+	+ buf_pool->n_flush[BUF_FLUSH_LIST] + buf_pool->n_flush[BUF_FLUSH_SINGLE_PAGE]);
+}
+
+void
+buf_print_io(char*	buf,	/* in/out: buffer where to print */
+	         char*	buf_end)/* in: buffer end */
+{
+	time_t	current_time;
+	double	time_elapsed;
+	ulint	size;
+	
+	ut_ad(buf_pool);
+
+	if (buf_end - buf < 400) {
+
+		return;
+	}
+
+	size = buf_pool_get_curr_size() / UNIV_PAGE_SIZE;
+
+	mutex_enter(&(buf_pool->mutex));
+	
+	buf += sprintf(buf,
+		"Buffer pool size   %lu\n", size);
+	buf += sprintf(buf,
+		"Free buffers       %lu\n", UT_LIST_GET_LEN(buf_pool->free));
+	buf += sprintf(buf,
+		"Database pages     %lu\n", UT_LIST_GET_LEN(buf_pool->LRU));
+
+	buf += sprintf(buf,
+		"Modified db pages  %lu\n",
+				UT_LIST_GET_LEN(buf_pool->flush_list));
+
+	buf += sprintf(buf, "Pending reads %lu \n", buf_pool->n_pend_reads);
+
+	buf += sprintf(buf,
+		"Pending writes: LRU %lu, flush list %lu, single page %lu\n",
+		buf_pool->n_flush[BUF_FLUSH_LRU],
+		buf_pool->n_flush[BUF_FLUSH_LIST],
+		buf_pool->n_flush[BUF_FLUSH_SINGLE_PAGE]);
+
+	current_time = time(NULL);
+	time_elapsed = 0.001 + difftime(current_time,
+						buf_pool->last_printout_time);
+	buf_pool->last_printout_time = current_time;
+
+	buf += sprintf(buf, "Pages read %lu, created %lu, written %lu\n",
+			buf_pool->n_pages_read, buf_pool->n_pages_created,
+						buf_pool->n_pages_written);
+	buf += sprintf(buf, "%.2f reads/s, %.2f creates/s, %.2f writes/s\n",
+		(buf_pool->n_pages_read - buf_pool->n_pages_read_old) / time_elapsed,
+		(buf_pool->n_pages_created - buf_pool->n_pages_created_old)/ time_elapsed,
+		(buf_pool->n_pages_written - buf_pool->n_pages_written_old)/ time_elapsed);
+
+	if (buf_pool->n_page_gets > buf_pool->n_page_gets_old) {
+		buf += sprintf(buf, "Buffer pool hit rate %lu / 1000\n",
+		1000 - ((1000 * (buf_pool->n_pages_read - buf_pool->n_pages_read_old)) / (buf_pool->n_page_gets - buf_pool->n_page_gets_old)));
+	} 
+	else
+		buf += sprintf(buf, "No buffer pool activity since the last printout\n");
+
+	buf_pool->n_page_gets_old = buf_pool->n_page_gets;
+	buf_pool->n_pages_read_old = buf_pool->n_pages_read;
+	buf_pool->n_pages_created_old = buf_pool->n_pages_created;
+	buf_pool->n_pages_written_old = buf_pool->n_pages_written;
+
+	mutex_exit(&(buf_pool->mutex));
+}
+
+void buf_refresh_io_stats(void)
+{
+	buf_pool->last_printout_time = time(NULL);
+	buf_pool->n_page_gets_old = buf_pool->n_page_gets;
+	buf_pool->n_pages_read_old = buf_pool->n_pages_read;
+	buf_pool->n_pages_created_old = buf_pool->n_pages_created;
+	buf_pool->n_pages_written_old = buf_pool->n_pages_written;
+}
+
+ibool buf_all_freed(void)
+{
+	buf_block_t*	block;
+	ulint		i;
+	
+	ut_ad(buf_pool);
+
+	mutex_enter(&(buf_pool->mutex));
+
+	for (i = 0; i < buf_pool->curr_size; i++) {
+		block = buf_pool_get_nth_block(buf_pool, i);
+
+		if (block->state == BUF_BLOCK_FILE_PAGE) {
+			if (!buf_flush_ready_for_replace(block))
+			    	ut_error;
+
+		}
+ 	}
+
+	mutex_exit(&(buf_pool->mutex));
+
+	return(TRUE);
+}
+
+/* out: TRUE if there is no pending i/o,是否有IO操作正在执行*/
+ibool buf_pool_check_no_pending_io(void)
+{
+	ibool	ret;
+
+	mutex_enter(&(buf_pool->mutex));
+
+	if (buf_pool->n_pend_reads + buf_pool->n_flush[BUF_FLUSH_LRU] + buf_pool->n_flush[BUF_FLUSH_LIST]
+	+ buf_pool->n_flush[BUF_FLUSH_SINGLE_PAGE] > 0)
+		ret = FALSE;
+	else
+		ret = TRUE;
+	}
+
+	mutex_exit(&(buf_pool->mutex));
+
+	return(ret);
+}
+
+/*获取空闲的blocks的个数*/
+ulint buf_get_free_list_len()
+{
+	ulint len;
+	
+	mutex_enter(&(buf_pool->mutex));
+
+	len = UT_LIST_GET_LEN(buf_pool->free);
+	
+	mutex_exit(&(buf_pool->mutex));
+
+	return len;
 }
 

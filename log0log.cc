@@ -771,8 +771,8 @@ loop:
 			group->id, next_offset, write_len,
 			ut_dulint_get_high(start_lsn),
 			ut_dulint_get_low(start_lsn));
-		printf(
-			"First block n:o %lu last block n:o %lu\n",
+
+		printf("First block n:o %lu last block n:o %lu\n",
 			log_block_get_hdr_no(buf),
 			log_block_get_hdr_no(buf + write_len - OS_FILE_LOG_BLOCK_SIZE));
 

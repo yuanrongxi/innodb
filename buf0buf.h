@@ -129,7 +129,7 @@ to improve debugging. Only values RW_S_LATCH and RW_X_LATCH are allowed
 in LA! */
 #define buf_page_get(SP, OF, LA, MTR)    buf_page_get_gen(\
 	SP, OF, LA, NULL,\
-	BUF_GET, IB__FILE__, __LINE__, MTR)
+	BUF_GET, __FILE__, __LINE__, MTR)
 
 /******************************************************************
 Use these macros to bufferfix a page with no latching. Remember not to
@@ -139,19 +139,19 @@ error-prone programming not to set a latch, and it should be used
 with care. */
 #define buf_page_get_with_no_latch(SP, OF, MTR)    buf_page_get_gen(\
 	SP, OF, RW_NO_LATCH, NULL,\
-	BUF_GET_NO_LATCH, IB__FILE__, __LINE__, MTR)
+	BUF_GET_NO_LATCH, __FILE__, __LINE__, MTR)
 /******************************************************************
 NOTE! The following macros should be used instead of buf_page_get_gen, to
 improve debugging. Only values RW_S_LATCH and RW_X_LATCH are allowed as LA! */
 #define buf_page_get_nowait(SP, OF, LA, MTR)    buf_page_get_gen(\
 	SP, OF, LA, NULL,\
-	BUF_GET_NOWAIT, IB__FILE__, __LINE__, MTR)
+	BUF_GET_NOWAIT, __FILE__, __LINE__, MTR)
 /******************************************************************
 NOTE! The following macros should be used instead of
 buf_page_optimistic_get_func, to improve debugging. Only values RW_S_LATCH and
 RW_X_LATCH are allowed as LA! */
 #define buf_page_optimistic_get(LA, G, MC, MTR) buf_page_optimistic_get_func(\
-	LA, G, MC, IB__FILE__, __LINE__, MTR)
+	LA, G, MC, __FILE__, __LINE__, MTR)
 
 /************************º¯ÊýÉêÃ÷******************************************************/
 void							buf_pool_init(ulint max_size, ulint curr_size);

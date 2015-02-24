@@ -25,6 +25,11 @@ UNIV_INLINE void btr_page_set_index_id(page_t* page, dulint id, mtr_t* mtr)
 	mlog_write_dulint(page + PAGE_HEADER + PAGE_INDEX_ID, id, MLOG_8BYTES, mtr);
 }
 
+UNIV_INLINE dulint btr_page_set_index_id(page_t* page)
+{
+	return mach_read_from_8(page + PAGE_HEADER + PAGE_INDEX_ID);
+}
+
 UNIV_INLINE ulint btr_page_get_level_low(page_t* page)
 {
 	ulint level;

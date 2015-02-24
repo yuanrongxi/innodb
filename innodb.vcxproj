@@ -79,6 +79,8 @@
     <None Include="btr0pcur.inl" />
     <None Include="btr0sea.inl" />
     <None Include="buf0buf.inl" />
+    <None Include="buf0flu.inl" />
+    <None Include="buf0lru.inl" />
     <None Include="data0data.inl" />
     <None Include="data0type.inl" />
     <None Include="dyn0dyn.inl" />
@@ -104,6 +106,9 @@
     <ClInclude Include="btr0sea.h" />
     <ClInclude Include="btr0types.h" />
     <ClInclude Include="buf0buf.h" />
+    <ClInclude Include="buf0flu.h" />
+    <ClInclude Include="buf0lru.h" />
+    <ClInclude Include="buf0rea.h" />
     <ClInclude Include="buf0types.h" />
     <ClInclude Include="data0data.h" />
     <ClInclude Include="data0type.h" />
@@ -130,6 +135,7 @@
     <ClInclude Include="mem0pool.h" />
     <ClInclude Include="mtr0log.h" />
     <ClInclude Include="mtr0mtr.h" />
+    <ClInclude Include="mtr0types.h" />
     <ClInclude Include="os0file.h" />
     <ClInclude Include="os0sync.h" />
     <ClInclude Include="os0thread.h" />
@@ -163,6 +169,9 @@
     <ClCompile Include="btr0pcur.cc" />
     <ClCompile Include="btr0sea.cc" />
     <ClCompile Include="buf0buf.cc" />
+    <ClCompile Include="buf0flu.cc" />
+    <ClCompile Include="buf0lru.cc" />
+    <ClCompile Include="buf0rea.cc" />
     <ClCompile Include="data0data.cc" />
     <ClCompile Include="data0type.cc" />
     <ClCompile Include="dyn0dyn.cc" />

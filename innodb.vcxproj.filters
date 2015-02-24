@@ -133,6 +133,12 @@
     <None Include="buf0buf.inl">
       <Filter>buf</Filter>
     </None>
+    <None Include="buf0lru.inl">
+      <Filter>buf</Filter>
+    </None>
+    <None Include="buf0flu.inl">
+      <Filter>buf</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -309,6 +315,18 @@
     <ClInclude Include="buf0types.h">
       <Filter>buf</Filter>
     </ClInclude>
+    <ClInclude Include="mtr0types.h">
+      <Filter>mtr</Filter>
+    </ClInclude>
+    <ClInclude Include="buf0lru.h">
+      <Filter>buf</Filter>
+    </ClInclude>
+    <ClInclude Include="buf0rea.h">
+      <Filter>buf</Filter>
+    </ClInclude>
+    <ClInclude Include="buf0flu.h">
+      <Filter>buf</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -447,6 +465,15 @@
       <Filter>ibuf</Filter>
     </ClCompile>
     <ClCompile Include="buf0buf.cc">
+      <Filter>buf</Filter>
+    </ClCompile>
+    <ClCompile Include="buf0lru.cc">
+      <Filter>buf</Filter>
+    </ClCompile>
+    <ClCompile Include="buf0rea.cc">
+      <Filter>buf</Filter>
+    </ClCompile>
+    <ClCompile Include="buf0flu.cc">
       <Filter>buf</Filter>
     </ClCompile>
   </ItemGroup>

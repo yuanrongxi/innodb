@@ -851,7 +851,7 @@ void fil_flush(ulint space_id)
 }
 
 /*对purpose的space进行刷盘*/
-void fil_flush_spaces(ulint purpose)
+void fil_flush_file_spaces(ulint purpose)
 {
 	fil_system_t*	system	= fil_system;
 	fil_space_t*	space;

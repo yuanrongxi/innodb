@@ -101,7 +101,7 @@ void		fil_aio_wait(ulint segment);
 
 void		fil_flush(ulint space_id);
 
-void		fil_flush_spaces(ulint purpose);
+void		fil_flush_file_spaces(ulint purpose);
 
 ibool		fil_validate();
 

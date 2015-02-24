@@ -41,6 +41,8 @@ UNIV_INLINE page_t*				btr_page_get(ulint space, ulint page_no, ulint mode, mtr_
 
 UNIV_INLINE dulint				btr_page_get_index_id(page_t* page);
 
+UNIV_INLINE void				btr_page_set_index_id(page_t* page, dulint id, mtr_t* mtr);
+
 UNIV_INLINE ulint				btr_page_get_level_low(page_t* page); 
 
 UNIV_INLINE ulint				btr_page_get_next(page_t* page, mtr_t* mtr);

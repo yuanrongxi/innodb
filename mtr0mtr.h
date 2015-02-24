@@ -61,7 +61,7 @@ typedef struct mtr_memo_slot_struct
 	void*			object;
 }mtr_memo_slot_t;
 
-typedef struct mtr_struct
+struct mtr_struct
 {
 	ulint			state;				/*mtr的状态，MTR_ACTIVE、MTR_COMMITING、MTR_COMMITTED*/
 	dyn_array_t		memo;				/*正在持有的latch列表*/
@@ -72,7 +72,7 @@ typedef struct mtr_struct
 	dulint			start_lsn;			/*mtr起始的LSN*/
 	dulint			end_lsn;			/*mtr结束的LSN*/
 	ulint			magic_n;			/*魔法字*/
-}mtr_t;
+};
 
 UNIV_INLINE mtr_t*		mtr_start(mtr_t* mtr);
 
