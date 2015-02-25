@@ -14,7 +14,7 @@ buf_pool_t* buf_pool		= NULL;
 ulint buf_dbg_counter		= 0;
 ibool buf_debug_prints		= FALSE;
 
-/*计算一个page内容的hash值*/
+/*计算一个page内容的checksum值*/
 ulint buf_calc_page_checksum(byte* page)
 {
 	ulint checksum;
@@ -178,6 +178,7 @@ static buf_pool_t* buf_pool_create(ulint max_size, ulint curr_size)
 	UT_LIST_INIT(buf_pool->LRU);
 	buf_pool->LRU_old = 0;
 
+	/*将闲置的buf_block放入free list当中*/
 	UT_LIST_INIT(buf_pool->free);
 	for(i = 0; i < curr_size; i ++){
 		block = buf_pool_get_nth_block(buf_pool, i);
@@ -187,7 +188,7 @@ static buf_pool_t* buf_pool_create(ulint max_size, ulint curr_size)
 	}
 
 	mutex_exit(&(buf_pool->mutex));
-	/*建立自适应HASH索引*/
+	/*建立自适应HASH索引,根据最大可以缓冲的page数作为hash桶个数*/
 	btr_search_sys_create(curr_size * UNIV_PAGE_SIZE / sizeof(void*) / 64);
 
 	return buf_pool;
@@ -247,7 +248,7 @@ buf_block_t* buf_page_peek_block(ulint space, ulint offset)
 	mutex_exit(&(buf_pool->mutex));
 }
 
-/*通过space id和page no查找对应的page是否有哈希索引*/
+/*通过space id和page no查找对应的page是否有自适应哈希索引*/
 ibool buf_page_peek_if_search_hashed(ulint space, ulint offset)
 {
 	buf_block_t* block;
@@ -342,7 +343,7 @@ loop:
 		if(mode == BUF_GET_IF_IN_POOL)
 			return NULL;
 
-		/*从磁盘上读入对应的页到buf pool中*/
+		/*从磁盘上读入对应的页到buf pool中,这里会同步从磁盘中读取(space, offset)对应的页数据*/
 		buf_read_page(space, offset);
 
 		goto loop;
@@ -369,7 +370,7 @@ loop:
 	ut_ad(block->buf_fix_count > 0);
 	ut_ad(block->state == BUF_BLOCK_FILE_PAGE);
 
-	/*对block上latch锁*/
+	/*对block上latch锁, FIX RULE规则*/
 	if(mode == BUF_GET_NOWAIT){
 		if(rw_latch == RW_S_LATCH){
 			success = rw_lock_s_lock_func_nowait(&(block->lock), file, line);
@@ -408,7 +409,7 @@ loop:
 
 	mtr_memo_push(mtr, block, fix_type);
 
-	/*尝试预读，因为block是第一次读取到buffer pool中*/
+	/*尝试线性预读，因为block是第一次读取到buffer pool中*/
 	if(!accessed)
 		buf_read_ahead_linear(space, offset);
 
@@ -512,7 +513,7 @@ ibool buf_page_get_known_nowait(ulint rw_latch, buf_frame_t* guess, ulint mode, 
 		mutex_exit(&(buf_pool->mutex));
 		return FALSE;
 	}
-
+	/*fix_count复位是在mtr_commit的时候会调用buf_page_release做复位*/
 	buf_block_buf_fix_inc(block);
 
 	if(mode == BUF_MAKE_YOUNG)
@@ -546,7 +547,7 @@ ibool buf_page_get_known_nowait(ulint rw_latch, buf_frame_t* guess, ulint mode, 
 	return TRUE;
 }
 
-/*为从ibbackup恢复page而进行的block初始化*/
+/*为从ibbackup恢复page而进行的block初始化,在redo log做重演的时候调用*/
 void buf_page_init_for_backup_restore(ulint space, ulint offset, buf_block_t* block)
 {
 	/* Set the state of the block */
@@ -620,6 +621,7 @@ sets a non-recursive exclusive lock on the buffer frame. The io-handler must
 take care that the flag is cleared and the lock released later. This is one
 of the functions which perform the state transition NOT_USED => FILE_PAGE to
 a block (the other is buf_page_create). 
+为从磁盘读取页数据的block做初始化。读取期间会持有block->lock的x-latch权限
 **************************************************************************/ 
 buf_block_t* buf_page_init_for_read(ulint mode, ulint space, ulint offset)
 {
@@ -679,7 +681,7 @@ buf_block_t* buf_page_init_for_read(ulint mode, ulint space, ulint offset)
 }
 
 /*建立一个page与buf_pool block之间的对应关系，并且会放入LRU队列中，通常这个过程是不需要从磁盘中导入页数据的，
-一般是将block state有NO_USED-->FILE_PAGE*/
+一般是将block state有NO_USED-->FILE_PAGE,很有可能是写需要新的page*/
 buf_frame_t* buf_page_create(ulint space, ulint offset, mtr_t* mtr)
 {
 	buf_frame_t*	frame;
@@ -720,6 +722,7 @@ buf_frame_t* buf_page_create(ulint space, ulint offset, mtr_t* mtr)
 
 	buf_block_buf_fix_inc(block);
 
+	/*在mtr_commit时指定其调用buf_page_release,表明调用者完成对页的操作*/
 	mtr_memo_push(mtr, block, MTR_MEMO_BUF_FIX);
 
 	block->accessed = TRUE;
@@ -1017,9 +1020,7 @@ ulint buf_get_n_pending_ios(void)
 	+ buf_pool->n_flush[BUF_FLUSH_LIST] + buf_pool->n_flush[BUF_FLUSH_SINGLE_PAGE]);
 }
 
-void
-buf_print_io(char*	buf,	/* in/out: buffer where to print */
-	         char*	buf_end)/* in: buffer end */
+void buf_print_io(char*	buf, char*	buf_end)
 {
 	time_t	current_time;
 	double	time_elapsed;
@@ -1027,42 +1028,28 @@ buf_print_io(char*	buf,	/* in/out: buffer where to print */
 	
 	ut_ad(buf_pool);
 
-	if (buf_end - buf < 400) {
-
+	if (buf_end - buf < 400)
 		return;
-	}
 
 	size = buf_pool_get_curr_size() / UNIV_PAGE_SIZE;
 
 	mutex_enter(&(buf_pool->mutex));
 	
-	buf += sprintf(buf,
-		"Buffer pool size   %lu\n", size);
-	buf += sprintf(buf,
-		"Free buffers       %lu\n", UT_LIST_GET_LEN(buf_pool->free));
-	buf += sprintf(buf,
-		"Database pages     %lu\n", UT_LIST_GET_LEN(buf_pool->LRU));
-
-	buf += sprintf(buf,
-		"Modified db pages  %lu\n",
-				UT_LIST_GET_LEN(buf_pool->flush_list));
-
+	buf += sprintf(buf,"Buffer pool size   %lu\n", size);
+	buf += sprintf(buf,"Free buffers       %lu\n", UT_LIST_GET_LEN(buf_pool->free));
+	buf += sprintf(buf,"Database pages     %lu\n", UT_LIST_GET_LEN(buf_pool->LRU));
+	buf += sprintf(buf,"Modified db pages  %lu\n", UT_LIST_GET_LEN(buf_pool->flush_list));
 	buf += sprintf(buf, "Pending reads %lu \n", buf_pool->n_pend_reads);
-
-	buf += sprintf(buf,
-		"Pending writes: LRU %lu, flush list %lu, single page %lu\n",
-		buf_pool->n_flush[BUF_FLUSH_LRU],
-		buf_pool->n_flush[BUF_FLUSH_LIST],
-		buf_pool->n_flush[BUF_FLUSH_SINGLE_PAGE]);
+	buf += sprintf(buf,"Pending writes: LRU %lu, flush list %lu, single page %lu\n",
+		buf_pool->n_flush[BUF_FLUSH_LRU],buf_pool->n_flush[BUF_FLUSH_LIST],buf_pool->n_flush[BUF_FLUSH_SINGLE_PAGE]);
 
 	current_time = time(NULL);
-	time_elapsed = 0.001 + difftime(current_time,
-						buf_pool->last_printout_time);
+	time_elapsed = 0.001 + difftime(current_time, buf_pool->last_printout_time);
 	buf_pool->last_printout_time = current_time;
 
 	buf += sprintf(buf, "Pages read %lu, created %lu, written %lu\n",
-			buf_pool->n_pages_read, buf_pool->n_pages_created,
-						buf_pool->n_pages_written);
+			buf_pool->n_pages_read, buf_pool->n_pages_created, buf_pool->n_pages_written);
+
 	buf += sprintf(buf, "%.2f reads/s, %.2f creates/s, %.2f writes/s\n",
 		(buf_pool->n_pages_read - buf_pool->n_pages_read_old) / time_elapsed,
 		(buf_pool->n_pages_created - buf_pool->n_pages_created_old)/ time_elapsed,
@@ -1092,6 +1079,7 @@ void buf_refresh_io_stats(void)
 	buf_pool->n_pages_written_old = buf_pool->n_pages_written;
 }
 
+/*判断buf_pool中所有的块能否被释放*/
 ibool buf_all_freed(void)
 {
 	buf_block_t*	block;
@@ -1107,7 +1095,6 @@ ibool buf_all_freed(void)
 		if (block->state == BUF_BLOCK_FILE_PAGE) {
 			if (!buf_flush_ready_for_replace(block))
 			    	ut_error;
-
 		}
  	}
 
@@ -1116,7 +1103,7 @@ ibool buf_all_freed(void)
 	return(TRUE);
 }
 
-/* out: TRUE if there is no pending i/o,是否有IO操作正在执行*/
+/* out: TRUE if there is no pending i/o,是否有IO操作(磁盘的读和写)正在执行*/
 ibool buf_pool_check_no_pending_io(void)
 {
 	ibool	ret;
@@ -1132,7 +1119,7 @@ ibool buf_pool_check_no_pending_io(void)
 
 	mutex_exit(&(buf_pool->mutex));
 
-	return(ret);
+	return ret;
 }
 
 /*获取空闲的blocks的个数*/

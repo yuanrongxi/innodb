@@ -331,7 +331,7 @@ UNIV_INLINE ulint ibuf_bitmap_page_get_bits(page_t* page, ulint page_no, ulint b
 
 	ut_ad(byte_offset + IBUF_BITMAP < UNIV_PAGE_SIZE);
 
-	map_type = mach_read_from_1(page + IBUF_BITMAP + byte_offset);
+	map_byte = mach_read_from_1(page + IBUF_BITMAP + byte_offset);
 	value = ut_bit_get_nth(map_byte, bit_offset);
 
 	/*如果是取page剩余空间的话，那么是取前面2位*/
@@ -486,11 +486,11 @@ UNIV_INLINE ibool ibuf_update_free_bits_for_two_pages_low(dict_index_t* index, p
 	mutex_exit(&ibuf_bitmap_mutex);
 }
 
-/*判断page_no对应的page是否是ibuf固定的page*/
+/*判断page_no对应的page是否是ibuf固定的page(bitmap page / root page)*/
 UNIV_INLINE ibool ibuf_fixed_addr_page(ulint page_no)
 {
 	/*page_no对应的page是ibuf bitmap page或者ibuf root page*/
-	if(ibuf_bitmap_page(page) || page_no == IBUF_TREE_ROOT_PAGE_NO)
+	if(ibuf_bitmap_page(page_no) || page_no == IBUF_TREE_ROOT_PAGE_NO)
 		return TRUE;
 
 	return FALSE;

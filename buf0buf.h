@@ -63,7 +63,7 @@ struct buf_block_struct
 	ulint						freed_page_clock;
 	ibool						old;
 	ibool						accessed;		/*block是否被buffer pool缓冲过，如果没有accessed = FALSE*/
-	ulint						buf_fix_count;  /**/
+	ulint						buf_fix_count;  /*对应的page正在被外部调用的对象的计数器*/
 	ulint						io_fix;			/*是否有IO操作正在对block对应的page做操作*/
 
 	dulint						modify_clock;

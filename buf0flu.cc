@@ -108,7 +108,7 @@ void buf_flush_write_complete(buf_block_t* block)
 		os_event_set(buf_pool->no_flush[block->flush_type]);
 }
 
-/*将doublewrite内存中的数据和对应的页刷入disk并且唤醒aio线程*/
+/*将doublewrite内存中的数据和对应的页刷入disk并且唤醒aio线程,页数据刷入盘是通过异步方式刷入的*/
 static void buf_flush_buffered_writes()
 {
 	buf_block_t*	block;
@@ -147,6 +147,7 @@ static void buf_flush_buffered_writes()
 
 	fil_flush(TRX_SYS_SPACE);
 
+	/*将对应的脏页刷入磁盘*/
 	for (i = 0; i < trx_doublewrite->first_free; i++) {
 		block = trx_doublewrite->buf_block_arr[i];
 		/*异步将page刷盘*/
@@ -156,10 +157,12 @@ static void buf_flush_buffered_writes()
 
 	os_aio_simulated_wake_handler_threads();
 
+	/*等待aio操作队列信号为空,也就是等待所有的write操作全部完成*/
 	os_aio_wait_until_no_pending_writes();
 
 	fil_flush_file_spaces(FIL_TABLESPACE);
 
+	/*保证doublewrite memory中的数据全部刷入磁盘*/
 	trx_doublewrite->first_free = 0;
 
 	mutex_exit(&(trx_doublewrite->mutex));

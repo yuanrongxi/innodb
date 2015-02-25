@@ -69,11 +69,8 @@ UNIV_INLINE ulint ibuf_index_page_calc_free_bits(ulint max_ins_size)
 	ulint n;
 	
 	n = max_ins_size / (UNIV_PAGE_SIZE / IBUF_PAGE_SIZE_PER_FREE_SPACE);
-	if(n == 3)
-		n = 2;
-
-	if(n > 3)
-		n = 3;
+	if(n == 3) n = 2;
+	if(n > 3) n = 3;
 
 	return n;
 }

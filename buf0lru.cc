@@ -148,7 +148,7 @@ loop:
 		mutex_exit(&(buf_pool->mutex));
 	}
 	
-	/*buf_pool->free 有buf_block*/
+	/*buf_pool->free 有buf_block,直接从free list中获取一个buf_block*/
 	if(UT_LIST_GET_LEN(buf_pool->free) > 0){
 		block = UT_LIST_GET_FIRST(buf_pool->free);
 		UT_LIST_REMOVE(free, buf_pool->free, block);
@@ -164,6 +164,7 @@ loop:
 
 	mutex_exit(&(buf_pool->mutex));
 
+	/*尝试将LRU中可以置换的block进行释放*/
 	freed = buf_LRU_search_and_free_block(n_iterations);
 	if(freed)
 		goto loop;
