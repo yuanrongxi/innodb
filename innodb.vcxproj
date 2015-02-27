@@ -142,6 +142,8 @@
     <ClInclude Include="page0cur.h" />
     <ClInclude Include="page0page.h" />
     <ClInclude Include="page0types.h" />
+    <ClInclude Include="que0que.h" />
+    <ClInclude Include="que0types.h" />
     <ClInclude Include="rem0cmp.h" />
     <ClInclude Include="rem0rec.h" />
     <ClInclude Include="rem0types.h" />
@@ -150,6 +152,7 @@
     <ClInclude Include="sync0sync.h" />
     <ClInclude Include="sync0types.h" />
     <ClInclude Include="thr0loc.h" />
+    <ClInclude Include="trx0types.h" />
     <ClInclude Include="ul0crc32.h" />
     <ClInclude Include="ut0bh.h" />
     <ClInclude Include="ut0byte.h" />

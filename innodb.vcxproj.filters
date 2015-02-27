@@ -65,6 +65,12 @@
     <Filter Include="buf">
       <UniqueIdentifier>{4c5adcfd-5606-4407-bc57-a7c53fe4f6cf}</UniqueIdentifier>
     </Filter>
+    <Filter Include="trx">
+      <UniqueIdentifier>{793bf725-0cff-4277-beb6-3ad9530c8a4e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="que">
+      <UniqueIdentifier>{67c38e17-fb0d-4564-a863-bfb54d11d641}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -326,6 +332,15 @@
     </ClInclude>
     <ClInclude Include="buf0flu.h">
       <Filter>buf</Filter>
+    </ClInclude>
+    <ClInclude Include="trx0types.h">
+      <Filter>trx</Filter>
+    </ClInclude>
+    <ClInclude Include="que0que.h">
+      <Filter>que</Filter>
+    </ClInclude>
+    <ClInclude Include="que0types.h">
+      <Filter>que</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
