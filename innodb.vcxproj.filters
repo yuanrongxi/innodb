@@ -145,6 +145,12 @@
     <None Include="buf0flu.inl">
       <Filter>buf</Filter>
     </None>
+    <None Include="trx0trx.inl">
+      <Filter>trx</Filter>
+    </None>
+    <None Include="trx0rseg.inl">
+      <Filter>trx</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -342,6 +348,12 @@
     <ClInclude Include="que0types.h">
       <Filter>que</Filter>
     </ClInclude>
+    <ClInclude Include="trx0trx.h">
+      <Filter>trx</Filter>
+    </ClInclude>
+    <ClInclude Include="trx0rseg.h">
+      <Filter>trx</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -490,6 +502,12 @@
     </ClCompile>
     <ClCompile Include="buf0flu.cc">
       <Filter>buf</Filter>
+    </ClCompile>
+    <ClCompile Include="trx0trx.cc">
+      <Filter>trx</Filter>
+    </ClCompile>
+    <ClCompile Include="trx0rseg.cc">
+      <Filter>trx</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

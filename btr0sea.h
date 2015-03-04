@@ -32,6 +32,8 @@
 #define BTR_SEARCH_ON_PATTERN_LIMIT	3
 #define BTR_SEARCH_ON_HASH_LIMIT	3
 
+#define BTR_SEA_TIMEOUT			10000
+
 struct btr_search_struct
 {
 	ulint						magic_n;			/*btr_search magic*/

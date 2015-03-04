@@ -97,6 +97,8 @@
     <None Include="page0page.inl" />
     <None Include="rem0cmp.inl" />
     <None Include="rem0rec.inl" />
+    <None Include="trx0rseg.inl" />
+    <None Include="trx0trx.inl" />
     <None Include="univ.h" />
   </ItemGroup>
   <ItemGroup>
@@ -152,6 +154,8 @@
     <ClInclude Include="sync0sync.h" />
     <ClInclude Include="sync0types.h" />
     <ClInclude Include="thr0loc.h" />
+    <ClInclude Include="trx0rseg.h" />
+    <ClInclude Include="trx0trx.h" />
     <ClInclude Include="trx0types.h" />
     <ClInclude Include="ul0crc32.h" />
     <ClInclude Include="ut0bh.h" />
@@ -205,6 +209,8 @@
     <ClCompile Include="sync0rw.cc" />
     <ClCompile Include="sync0sync.cc" />
     <ClCompile Include="thr0loc.cc" />
+    <ClCompile Include="trx0rseg.cc" />
+    <ClCompile Include="trx0trx.cc" />
     <ClCompile Include="ul0crc32.cc" />
     <ClCompile Include="ut0bh.cc" />
     <ClCompile Include="ut0byte.cc" />
