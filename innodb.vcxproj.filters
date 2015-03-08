@@ -151,6 +151,9 @@
     <None Include="trx0rseg.inl">
       <Filter>trx</Filter>
     </None>
+    <None Include="trx0sys.inl">
+      <Filter>trx</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -354,6 +357,9 @@
     <ClInclude Include="trx0rseg.h">
       <Filter>trx</Filter>
     </ClInclude>
+    <ClInclude Include="trx0sys.h">
+      <Filter>trx</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -507,6 +513,9 @@
       <Filter>trx</Filter>
     </ClCompile>
     <ClCompile Include="trx0rseg.cc">
+      <Filter>trx</Filter>
+    </ClCompile>
+    <ClCompile Include="trx0sys.c">
       <Filter>trx</Filter>
     </ClCompile>
   </ItemGroup>
