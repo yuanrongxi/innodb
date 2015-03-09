@@ -6,7 +6,7 @@
 #include "trx0sys.h"
 
 /* Undo log segment slot in a rollback segment header */
-#define TRX_RSEG_SLOT_PAGE_NO		0			/*undo log头页的页序号*/
+#define TRX_RSEG_SLOT_PAGE_NO		0			/*undo log头页的页序号slots*/
 
 #define TRX_RSEG_SLOT_SIZE			4			/*slot size*/
 

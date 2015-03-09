@@ -154,6 +154,12 @@
     <None Include="trx0sys.inl">
       <Filter>trx</Filter>
     </None>
+    <None Include="trx0purge.inl">
+      <Filter>trx</Filter>
+    </None>
+    <None Include="trx0rec.inl">
+      <Filter>trx</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -358,6 +364,12 @@
       <Filter>trx</Filter>
     </ClInclude>
     <ClInclude Include="trx0sys.h">
+      <Filter>trx</Filter>
+    </ClInclude>
+    <ClInclude Include="trx0purge.h">
+      <Filter>trx</Filter>
+    </ClInclude>
+    <ClInclude Include="trx0rec.h">
       <Filter>trx</Filter>
     </ClInclude>
   </ItemGroup>

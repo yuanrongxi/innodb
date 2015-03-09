@@ -97,6 +97,8 @@
     <None Include="page0page.inl" />
     <None Include="rem0cmp.inl" />
     <None Include="rem0rec.inl" />
+    <None Include="trx0purge.inl" />
+    <None Include="trx0rec.inl" />
     <None Include="trx0rseg.inl" />
     <None Include="trx0sys.inl" />
     <None Include="trx0trx.inl" />
@@ -155,6 +157,8 @@
     <ClInclude Include="sync0sync.h" />
     <ClInclude Include="sync0types.h" />
     <ClInclude Include="thr0loc.h" />
+    <ClInclude Include="trx0purge.h" />
+    <ClInclude Include="trx0rec.h" />
     <ClInclude Include="trx0rseg.h" />
     <ClInclude Include="trx0sys.h" />
     <ClInclude Include="trx0trx.h" />
