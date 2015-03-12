@@ -43,7 +43,7 @@ struct trx_purge_struct
 
 UNIV_INLINE fil_addr_t			trx_purge_get_log_from_hist(fil_addr_t node_addr);
 
-ibool							trx_purge_updage_undo_must_exist(dulint trx_id);
+ibool							trx_purge_update_undo_must_exist(dulint trx_id);
 
 void							trx_purge_sys_create();
 

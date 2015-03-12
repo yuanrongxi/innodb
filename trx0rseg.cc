@@ -5,7 +5,7 @@
 #include "trx0purge.h"
 
 /*通过rollback segment id查找rollback segment 对象*/
-trx_rseg_t* trx_rseg_get_on_id)(ulint id)
+trx_rseg_t* trx_rseg_get_on_id(ulint id)
 {
 	trx_rseg_t* rseg;
 

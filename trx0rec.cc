@@ -422,7 +422,7 @@ static ulint trx_undo_page_report_modify(page_t* undo_page, trx_t* trx, dict_ind
 }
 
 /*读取undo update rec特有的头信息（bits, trx_id, roll_ptr)三个值*/
-byte* trx_undo_undate_rec_get_sys_cols(byte* ptr, dulint* trx_id, dulint* roll_ptr, ulint* info_bits)
+byte* trx_undo_update_rec_get_sys_cols(byte* ptr, dulint* trx_id, dulint* roll_ptr, ulint* info_bits)
 {
 	ulint len;
 
@@ -692,3 +692,181 @@ ulint trx_undo_report_row_operation(ulint flags, ulint op_type, que_thr_t* thr, 
 	return DB_SUCCESS;
 }
 
+/*从roll_ptr指向的undo rec中拷贝到heap 分配的内存记录中*/
+trx_undo_rec_t* trx_undo_get_undo_rec_low(dulint roll_ptr, mem_heap_t* heap)
+{
+	trx_undo_rec_t*	undo_rec;
+	ulint		rseg_id;
+	ulint		page_no;
+	ulint		offset;
+	page_t*		undo_page;
+	trx_rseg_t*	rseg;
+	ibool		is_insert;
+	mtr_t		mtr;
+
+	/*获得roll_ptr对应的回滚信息*/
+	trx_undo_decode_roll_ptr(roll_ptr, &is_insert, &rseg_id, &page_no, &offset);
+	rseg = trx_rseg_get_on_id(rseg_id); /*获得回滚段对象*/
+
+	mstr_start(&mtr);
+
+	undo_page = trx_undo_pageg_get_s_latched(rseg->space, page_no, &mtr);
+	undo_rec = trx_undo_rec_copy(undo_page + offset, heap);
+
+	mtr_commit(&mtr);
+
+	return undo_rec;
+}
+
+/*从undo page中拷贝undo rec到heap 内存中*/
+ulint trx_undo_get_undo_rec(dulint roll_ptr, dulint trx_id, trx_undo_rec_t** undo_rec, mem_heap_t* heap)
+{
+	ut_ad(rw_lock_own(&(purge_sys->latch), RW_LOCK_SHARED));
+
+	if(!trx_purge_update_undo_must_exist(trx_id))
+		return DB_MISSING_HISTORY;
+
+	*undo_rec = trx_undo_get_undo_rec_low(roll_ptr, heap);
+	return DB_SUCCESS;
+}
+
+ulint trx_undo_prev_version_build(rec_t* index_rec, mtr_t* index_mtr, rec_t* rec, dict_index_t* index, mem_heap_t* heap, rec_t** old_vers)
+{
+	trx_undo_rec_t*	undo_rec;
+	dtuple_t*	entry;
+	dulint		rec_trx_id;
+	ulint		type;
+	dulint		undo_no;
+	dulint		table_id;
+	dulint		trx_id;
+	dulint		roll_ptr;
+	dulint		old_roll_ptr;
+	upd_t*		update;
+	byte*		ptr;
+	ulint		info_bits;
+	ulint		cmpl_info;
+	ibool		dummy_extern;
+	byte*		buf;
+	ulint		err;
+	ulint		i;
+	char		err_buf[1000];
+
+	ut_ad(rw_lock_own(&(purge_sys->latch), RW_LOCK_SHARED));
+	ut_ad(mtr_memo_contains(index_mtr, buf_block_align(index_rec),  MTR_MEMO_PAGE_S_FIX) ||
+		  mtr_memo_contains(index_mtr, buf_block_align(index_rec),  MTR_MEMO_PAGE_X_FIX));
+
+	/*不是聚集索引*/
+	if(!(index->type & DICT_CLUSTERED)){
+		fprintf(stderr,
+			"InnoDB: Error: trying to access update undo rec for table %s\n"
+			"InnoDB: index %s which is not a clustered index\n",
+			index->table_name, index->name);
+		fprintf(stderr, "InnoDB: Send a detailed bug report to mysql@lists.mysql.com");
+
+		rec_sprintf(err_buf, 900, index_rec);
+		fprintf(stderr, "InnoDB: index record %s\n", err_buf);
+
+		rec_sprintf(err_buf, 900, rec);
+		fprintf(stderr, "InnoDB: record version %s\n", err_buf);
+
+		return(DB_ERROR);
+	}
+
+	roll_ptr = row_get_rec_roll_ptr(rec, index);
+	old_roll_ptr = roll_ptr;
+
+	*old_vers = NULL;
+
+	if(trx_undo_roll_ptr_is_insert(roll_ptr)){ /*插入记录，没有老版本记录*/
+		return DB_SUCCESS;
+	}
+
+	rec_trx_id = row_get_rec_trx_id(rec, index);
+	/*将对应的undo rec拷贝到undo_rec中*/
+	err = trx_undo_get_undo_rec(roll_ptr, rec_trx_id, &undo_rec, heap);
+	if(err != DB_SUCCESS)
+		return err;
+	/*从undo_rec读取对应的rec 头信息*/
+	ptr = trx_undo_rec_get_pars(undo_rec, &type, &cmpl_info, &dummy_extern, &undo_no, &table_id);
+	/*读取undo rec中的trx_id roll_ptr info_bits*/
+	ptr = trx_undo_update_rec_get_sys_cols(ptr, &trx_id, &roll_ptr, &info_bits);
+
+	ptr = trx_undo_rec_skip_row_ref(ptr, index);
+	/*读取update vector*/
+	ptr = trx_undo_update_rec_get_update(ptr, index, type, trx_id, roll_ptr, info_bits, heap, &update);
+
+	if (ut_dulint_cmp(table_id, index->table->id) != 0) { /*不是同一张表的记录，innodb出错*/
+		ptr = NULL;
+
+		fprintf(stderr, "InnoDB: Error: trying to access update undo rec for table %s\n"
+			"InnoDB: but the table id in the undo record is wrong\n",
+			index->table_name);
+		fprintf(stderr, "InnoDB: Send a detailed bug report to mysql@lists.mysql.com\n");
+
+		fprintf(stderr, "InnoDB: Run also CHECK TABLE on table %s\n", index->table_name);
+	}
+
+	/*undo rec损坏了！！*/
+	if(ptr == NULL){
+		fprintf(stderr,
+			"InnoDB: Table name %s, index name %s, n_uniq %lu\n",
+			index->table_name, index->name,
+			dict_index_get_n_unique(index));
+
+		fprintf(stderr,
+			"InnoDB: undo rec address %lx, type %lu cmpl_info %lu\n",
+			(ulint)undo_rec, type, cmpl_info);
+		fprintf(stderr,
+			"InnoDB: undo rec table id %lu %lu, index table id %lu %lu\n",
+			ut_dulint_get_high(table_id),
+			ut_dulint_get_low(table_id),
+			ut_dulint_get_high(index->table->id),
+			ut_dulint_get_low(index->table->id));
+
+		ut_sprintf_buf(err_buf, undo_rec, 150);
+
+		fprintf(stderr, "InnoDB: dump of 150 bytes in undo rec: %s\n", err_buf);
+		rec_sprintf(err_buf, 900, index_rec);
+		fprintf(stderr, "InnoDB: index record %s\n", err_buf);
+
+		rec_sprintf(err_buf, 900, rec);
+		fprintf(stderr, "InnoDB: record version %s\n", err_buf);
+
+		fprintf(stderr, "InnoDB: Record trx id %lu %lu, update rec trx id %lu %lu\n",
+			ut_dulint_get_high(rec_trx_id),
+			ut_dulint_get_low(rec_trx_id),
+			ut_dulint_get_high(trx_id),
+			ut_dulint_get_low(trx_id));
+
+		fprintf(stderr, "InnoDB: Roll ptr in rec %lu %lu, in update rec %lu %lu\n",
+			ut_dulint_get_high(old_roll_ptr),
+			ut_dulint_get_low(old_roll_ptr),
+			ut_dulint_get_high(roll_ptr),
+			ut_dulint_get_low(roll_ptr));
+
+		trx_purge_sys_print();
+
+		return(DB_ERROR);
+	}
+
+	/*构建老版本对应的物理记录*/
+	if(row_upd_changes_field_size(rec, index, update)){
+		entry = row_rec_to_index_entry(ROW_COPY_DATA, index, rec, heap);
+		row_upd_clust_index_replace_new_col_vals(entry, update);
+
+		buf = mem_heap_alloc(heap, rec_get_converted_size(entry));
+		*old_vers = rec_convert_dtuple_to_rec(buf, entry);
+	}
+	else{
+		buf = mem_heap_alloc(heap, rec_get_size(rec));
+		*old_vers = rec_copy(buf, rec);
+		row_upd_rec_in_place(*old_vers, update);
+	}
+
+	for (i = 0; i < upd_get_n_fields(update); i++) {
+		if (upd_get_nth_field(update, i)->extern_storage)
+			rec_set_nth_field_extern_bit(*old_vers, upd_get_nth_field(update, i)->field_no, TRUE, NULL);
+	}
+
+	return DB_SUCCESS;
+}
