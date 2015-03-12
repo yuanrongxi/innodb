@@ -163,6 +163,7 @@
     <ClInclude Include="trx0sys.h" />
     <ClInclude Include="trx0trx.h" />
     <ClInclude Include="trx0types.h" />
+    <ClInclude Include="trx0undo.h" />
     <ClInclude Include="ul0crc32.h" />
     <ClInclude Include="ut0bh.h" />
     <ClInclude Include="ut0byte.h" />
