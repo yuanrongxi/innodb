@@ -530,5 +530,8 @@
     <ClCompile Include="trx0sys.c">
       <Filter>trx</Filter>
     </ClCompile>
+    <ClCompile Include="trx0rec.cc">
+      <Filter>trx</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
