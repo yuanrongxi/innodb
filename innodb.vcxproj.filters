@@ -160,6 +160,9 @@
     <None Include="trx0rec.inl">
       <Filter>trx</Filter>
     </None>
+    <None Include="trx0undo.inl">
+      <Filter>trx</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -534,6 +537,9 @@
       <Filter>trx</Filter>
     </ClCompile>
     <ClCompile Include="trx0rec.cc">
+      <Filter>trx</Filter>
+    </ClCompile>
+    <ClCompile Include="trx0undo.cc">
       <Filter>trx</Filter>
     </ClCompile>
   </ItemGroup>

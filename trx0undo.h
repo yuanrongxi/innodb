@@ -65,7 +65,55 @@ struct trx_undo_struct
 #define TRX_UNDO_TO_FREE				3
 #define TRX_UNDO_TO_PURGE				4
 
-UNIV_INLINE dulint trx_undo_build_roll_ptr(ibool is_insert, ulint rseg_id, ulint page_no, ulint offset);
+UNIV_INLINE dulint						trx_undo_build_roll_ptr(ibool is_insert, ulint rseg_id, ulint page_no, ulint offset);
+
+UNIV_INLINE void						trx_undo_decode_roll_ptr(dulint roll_ptr, ibool* is_insert, ulint* rseg_id, ulint* page_no, ulint* offset);
+
+UNIV_INLINE void						trx_write_roll_ptr(byte* ptr, dulint roll_ptr);
+
+UNIV_INLINE dulint						trx_read_roll_ptr(byte* ptr);
+
+UNIV_INLINE page_t*						trx_undo_page_get(ulint space, ulint page_no, mtr_t* mtr);
+
+UNIV_INLINE page_t*						trx_undo_page_get_s_latched(ulint space, ulint page_no, mtr_t* mtr);
+
+UNIV_INLINE trx_undo_rec_t*				trx_undo_page_get_prev_rec(trx_undo_rec_t* rec, ulint page_no, ulint offset);
+
+UNIV_INLINE trx_undo_rec_t*				trx_undo_page_get_next_rec(trx_undo_rec_t* rec, ulint page_no, ulint offset);
+
+UNIV_INLINE trx_undo_rec_t*				trx_undo_page_get_last_rec(page_t* undo_page, ulint page_no, ulint offset);
+
+UNIV_INLINE trx_undo_rec_t*				trx_undo_page_get_first_rec(page_t* undo_page, ulint page_no, ulint offset);
+
+trx_undo_rec_t*							trx_undo_get_prev_rec(trx_undo_rec_t* rec, ulint page_no, ulint offset, mtr_t* mtr);
+
+trx_undo_rec_t*							trx_undo_get_next_rec(trx_undo_rec_t* rec, ulint page_no, ulint offset, mtr_t* mtr);
+
+trx_undo_rec_t*							trx_undo_get_first_rec(ulint space, ulint page_no, ulint offset, ulint mode, mtr_t* mtr);
+
+ulint									trx_undo_add_page(trx_t* trx, trx_undo_t* undo, mtr_t* mtr);
+
+void									trx_undo_truncate_end(trx_t* trx, trx_undo_t* undo, dulint limit);
+
+void									trx_undo_truncate_start(trx_rseg_t* rseg, ulint space, ulint hdr_page_no, ulint hdr_offset, dulint limit);
+
+ulint									trx_undo_lists_init(trx_rseg_t* rseg);
+
+trx_undo_t*								trx_undo_assign_undo(trx_t* trx, ulint type);
+
+page_t*									trx_undo_set_state_at_finish(trx_t* trx, trx_undo_t* undo, mtr_t* mtr);
+
+void									trx_undo_update_cleanup(trx_t* trx, page_t* undo_page, mtr_t* mtr);
+
+dulint									trx_undo_update_cleanup_by_discard(trx_t* trx, mtr_t* mtr);
+
+void									trx_undo_insert_cleanup(trx_t* trx);
+
+byte*									trx_undo_parse_page_init(byte* ptr, byte* end_ptr, page_t* page, mtr_t* mtr);
+
+byte*									trx_undo_parse_page_header(ulint type, byte* ptr, byte* end_ptr, page_t* page, mtr_t* mtr);
+
+byte*									trx_undo_parse_discard_latest(byte* ptr, byte* end_ptr, page_t* page, mtr_t* mtr);
 
 #include "trx0undo.inl"
 

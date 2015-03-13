@@ -102,6 +102,7 @@
     <None Include="trx0rseg.inl" />
     <None Include="trx0sys.inl" />
     <None Include="trx0trx.inl" />
+    <None Include="trx0undo.inl" />
     <None Include="univ.h" />
   </ItemGroup>
   <ItemGroup>
@@ -220,6 +221,7 @@
     <ClCompile Include="trx0rseg.cc" />
     <ClCompile Include="trx0sys.c" />
     <ClCompile Include="trx0trx.cc" />
+    <ClCompile Include="trx0undo.cc" />
     <ClCompile Include="ul0crc32.cc" />
     <ClCompile Include="ut0bh.cc" />
     <ClCompile Include="ut0byte.cc" />
