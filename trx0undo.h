@@ -13,7 +13,7 @@ struct trx_undo_struct
 	ulint				type;			/*undo的类型：insert或者update*/
 	ulint				state;
 	ibool				del_marks;		/*删除表示，TRUE时事务进行了delete mark操作或者事务更新了extern属性列*/
-	ulint				trx_id;			/*事务ID*/
+	dulint				trx_id;			/*事务ID*/
 	ibool				dict_operation;	/*是否是DDL操作*/
 	dulint				table_id;		/*DDLD对应的table id*/
 	trx_rseg_t*			rseg;			/*对应的回滚段句柄*/

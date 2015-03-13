@@ -551,7 +551,7 @@ loop:
 	goto loop;
 }
 
-/*释放undo log 段*/
+/*释放undo log段*/
 static void trx_undo_seg_free(trx_undo_t* undo)
 {
 	trx_rseg_t*	rseg;
@@ -584,4 +584,448 @@ static void trx_undo_seg_free(trx_undo_t* undo)
 	}
 }
 
+/*当数据库启动时，根据undo的头页构建内存中的undo对象(trx_undo_t)*/
+static trx_undo_t* trx_undo_mem_create_at_db_start(trx_rseg_t* rseg, ulint id, ulint page_no, mtr_t* mtr)
+{
+	page_t*		undo_page;
+	trx_upagef_t*	page_header;
+	trx_usegf_t*	seg_header;
+	trx_ulogf_t*	undo_header;
+	trx_undo_t*	undo;
+	ulint		type;
+	ulint		state;
+	dulint		trx_id;
+	ulint		offset;
+	fil_addr_t	last_addr;
+	page_t*		last_page;
+	trx_undo_rec_t*	rec;
+
+	if(id >= TRX_RSEG_N_SLOTS){
+		fprintf(stderr, "InnoDB: Error: undo->id is %lu\n", id);
+		ut_a(0);
+	}
+	/*获得undo page指针和undo page header指针*/
+	undo_page = trx_undo_page_get(rseg->space, page_no, mtr);
+	page_header = undo_page + TRX_UNDO_PAGE_HDR;
+	/*获得undo的类型*/
+	type = mtr_read_ulint(page_header + TRX_UNDO_PAGE_TYPE, MLOG_2BYTES, mtr);
+	/*获得undo segment header*/
+	seg_header = undo_page + TRX_UNDO_SEG_HDR;
+	state = mach_read_from_2(seg_header + TRX_UNDO_STATE);
+	offset = mach_read_from_2(seg_header + TRX_UNDO_LAST_LOG);
+
+	undo_header = undo_page + offset;
+
+	trx_id = mtr_read_dulint(undo_header + TRX_UNDO_TRX_ID, MLOG_8BYTES, mtr);
+	
+	mutex_enter(&(rseg->mutex));
+	undo = trx_undo_mem_create(rseg, id, type, trx_id, page_no, offset);
+	mutex_exit(&(rseg->mutex));
+
+	undo->dict_operation = mtr_read_ulint(undo_header + TRX_UNDO_DICT_OPERATION, MLOG_2BYTES, mtr);
+	undo->table_id = mtr_read_dulint(undo_header + TRX_UNDO_TABLE_ID, MLOG_8BYTES, mtr);
+	undo->state = state;
+	undo->size = flst_get_len(seg_header + TRX_UNDO_PAGE_LIST, mtr);
+	if(state == TRX_UNDO_TO_FREE)
+		goto add_to_list;
+
+	last_addr = flst_get_last(seg_header + TRX_UNDO_PAGE_LIST, mtr);
+	undo->last_page_no = last_addr.page;
+	undo->top_page_no = last_addr.page;
+
+	/*载入undo的最后一页，并且将最后一条记录的偏移读出*/
+	last_page = trx_undo_page_get(rseg->space, undo->last_page_no, mtr);
+	rec = trx_undo_page_get_last_rec(last_page, page_no, offset);
+	if(rec == NULL)
+		undo->empty = TRUE;
+	else{
+		undo->empty = FALSE;
+		undo->top_offset = rec - last_page;						/*最后一条记录的页中的偏移量*/
+		undo->top_undo_no = trx_undo_rec_get_undo_no(rec);		/*最后一条记录的undo number*/
+	}
+
+	/*将undo 对象加入到rollback segment的对象中*/
+add_to_list:	
+	if (type == TRX_UNDO_INSERT) { 
+		if (state != TRX_UNDO_CACHED)
+			UT_LIST_ADD_LAST(undo_list, rseg->insert_undo_list, undo);
+		else
+			UT_LIST_ADD_LAST(undo_list, rseg->insert_undo_cached, undo);
+	} 
+	else {
+		ut_ad(type == TRX_UNDO_UPDATE);
+		if (state != TRX_UNDO_CACHED)
+			UT_LIST_ADD_LAST(undo_list, rseg->update_undo_list, undo);
+		else
+			UT_LIST_ADD_LAST(undo_list, rseg->update_undo_cached, undo);
+	}
+
+	return undo;
+}
+
+/*对rollback segment中的undo lists进行初始化*/
+ulint trx_undo_lists_init(trx_rseg_t* rseg)
+{
+	ulint		page_no;
+	trx_undo_t*	undo;
+	ulint		size	= 0;
+	trx_rsegf_t*	rseg_header;
+	ulint		i;
+	mtr_t		mtr;
+
+	UT_LIST_INIT(rseg->update_undo_list);
+	UT_LIST_INIT(rseg->update_undo_cached);
+	UT_LIST_INIT(rseg->insert_undo_list);
+	UT_LIST_INIT(rseg->insert_undo_cached);
+
+	mtr_start(&mtr);
+
+	rseg_header = trx_rsegf_get_new(rseg->space, rseg->page_no, &mtr);
+	for(i = 0; i < TRX_RSEG_N_SLOTS; i++){ /*根据rseg slots中的page no进行undo对象构建*/
+		page_no = trx_rsegf_get_nth_undo(rseg_header, i, &mtr);
+		if(page_no != FIL_NULL && srv_force_recovery < SRV_FORCE_NO_UNDO_LOG_SCAN){
+			undo = trx_undo_mem_create_at_db_start(rseg, i, page_no, &mtr);
+			size += undo->size;
+
+			mtr_commit(&mtr);
+			mtr_start(&mtr);
+
+			/*对rseg header page重新获得x-latch所有权，因为上面进行了mtr_commit，x-latch被释放了*/
+			rseg_header = trx_rsegf_get(rseg->space, rseg->page_no, &mtr);
+		}
+	}
+
+	mtr_commit(&mtr);
+
+	return size;
+}
+
+/*创建并初始化一个trx_undo_t*/
+static trx_undo_t* trx_undo_mem_create(trx_rseg_t* rseg, ulint id, ulint type, dulint trx_id, ulint page_no, ulint offset)
+{
+	trx_undo_t*	undo;
+
+	ut_ad(mutex_own(&(rseg->mutex)));
+
+	if (id >= TRX_RSEG_N_SLOTS) {
+		fprintf(stderr, "InnoDB: Error: undo->id is %lu\n", id);
+		ut_a(0);
+	}
+
+	undo = mem_alloc(sizeof(trx_undo_t));
+	undo->id = id;
+	undo->type = type;
+	undo->state = TRX_UNDO_ACTIVE;
+	undo->del_marks = FALSE;
+	undo->trx_id = trx_id;
+	undo->dict_operation = FALSE;
+	undo->rseg = rseg;
+
+	undo->space = rseg->space;
+	undo->hdr_page_no = page_no;
+	undo->hdr_offset = offset;
+	undo->last_page_no = page_no;
+	undo->size = 1;
+
+	undo->empty = TRUE;
+	undo->top_page_no = page_no;
+	undo->guess_page = NULL;
+
+	return undo;
+}
+
+/*初始化一个cached状态的trx_undo_t对象*/
+static void trx_undo_mem_init_for_reuse(trx_undo_t* undo, dulint trx_id, ulint offset)
+{
+	ut_ad(mutex_own(&((undo->rseg)->mutex)));
+
+	if (undo->id >= TRX_RSEG_N_SLOTS) {
+		fprintf(stderr, "InnoDB: Error: undo->id is %lu\n", undo->id);
+		mem_analyze_corruption((byte*)undo);
+		ut_a(0);
+	}
+
+	undo->state = TRX_UNDO_ACTIVE;
+	undo->del_marks = FALSE;
+	undo->trx_id = trx_id;
+
+	undo->dict_operation = FALSE;
+
+	undo->hdr_offset = offset;
+	undo->empty = TRUE;
+}
+
+/*释放一个内存的undo对象*/
+static void trx_undo_mem_free(trx_undo_t* undo)
+{
+	if (undo->id >= TRX_RSEG_N_SLOTS) {
+		fprintf(stderr, "InnoDB: Error: undo->id is %lu\n", undo->id);
+		ut_a(0);
+	}
+
+	mem_free(undo);
+}
+
+/*新建一个undo log对象,可能会有磁盘IO*/
+static trx_undo_t* trx_undo_create(trx_rseg_t* rseg, ulint type, dulint trx_id, mtr_t* mtr)
+{
+	trx_rsegf_t*	rseg_header;
+	ulint		page_no;
+	ulint		offset;
+	ulint		id;
+	trx_undo_t*	undo;
+	page_t*		undo_page;
+
+	ut_ad(mutex_own(&(rseg->mutex)));
+	if(rseg->curr_size == rseg->max_size)
+		return NULL;
+
+	rseg->curr_size ++;
+
+	rseg_header = trx_rsegf_get(rseg->space, rseg->page_no, mtr);
+	/*新建个undo log段*/
+	undo_page = trx_undo_seg_create(rseg, rseg_header, type, &id, mtr);
+	if(undo_page == NULL){
+		rseg->curr_size --;
+		return NULL;
+	}
+
+	page_no = buf_frame_get_page_no(undo_page);
+	/*创建一个undo log header*/
+	offset = trx_undo_header_create(undo_page, trx_id, mtr);
+	/*新建一个undo对象*/
+	undo = trx_undo_mem_create(rseg, id, type, trx_id, page_no, offset);
+
+	return undo;
+}
+
+/*复用cached中的undo对象*/
+static trx_undo_t* trx_undo_reuse_cached(trx_rseg_t* rseg, ulint type, dulint trx_id, mtr_t* mtr)
+{
+	trx_undo_t*	undo;
+	page_t*		undo_page;
+	ulint		offset;
+
+	ut_ad(mutex_own(&(rseg->mutex)));
+	/*从cached中获取一个undo对象*/
+	if(type == TRX_UNDO_INSERT){
+		undo = UT_LIST_GET_FIRST(rseg->insert_undo_cached);
+		if(undo == NULL)
+			return NULL;
+
+		UT_LIST_REMOVE(undo_list, rseg->insert_undo_cached, undo);
+	}
+	else{
+		ut_ad(type == TRX_UNDO_UPDATE);
+		undo = UT_LIST_GET_FIRST(rseg->update_undo_cached);
+		if(undo == NULL)
+			return NULL;
+
+		UT_LIST_REMOVE(undo_list, rseg->update_undo_cached, undo);
+	}
+
+	ut_ad(undo->size == 1);
+	ut_ad(undo->hdr_page_no == undo->top_page_no);
+
+	if(undo->id == TRX_RSEG_N_SLOTS){
+		fprintf(stderr, "InnoDB: Error: undo->id is %lu\n", undo->id);
+		mem_analyze_corruption((byte*)undo);
+		ut_a(0);
+	}
+
+	undo_page = trx_undo_page_get(undo->space, undo->hdr_page_no, mtr);
+	if(type == TRX_UNDO_INSERT)
+		offset = trx_undo_insert_header_reuse(undo_page, trx_id, mtr);
+	else{
+		ut_a(mach_read_from_2(undo_page + TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_TYPE) == TRX_UNDO_UPDATE);
+		offset = trx_undo_header_create(undo_page, trx_id, mtr);
+	}
+
+	/*复用赋值*/
+	trx_undo_mem_init_for_reuse(undo, trx_id, offset);
+
+	return undo;
+}
+/*标记undo的DDL操作*/
+static void trx_undo_mark_as_dict_operation(trx_t* trx, trx_undo_t* undo, mtr_t* mtr)
+{
+	page_t*	hdr_page;
+
+	ut_a(trx->dict_operation);
+
+	hdr_page = trx_undo_page_get(undo->space, undo->hdr_page_no, mtr);
+
+	mlog_write_ulint(hdr_page + undo->hdr_offset + TRX_UNDO_DICT_OPERATION, trx->dict_operation, MLOG_2BYTES, mtr);
+	mlog_write_dulint(hdr_page + undo->hdr_offset + TRX_UNDO_TABLE_ID, trx->table_id, MLOG_8BYTES, mtr);	
+
+	undo->dict_operation = trx->dict_operation;
+	undo->table_id = trx->table_id;
+}
+
+/*分配一个undo对象，会创建undo log segment和构建undo内存对象*/
+trx_undo_t* trx_undo_assign_undo(trx_t* trx, ulint type)
+{
+	trx_rseg_t*	rseg;
+	trx_undo_t*	undo;
+	mtr_t		mtr;
+
+	ut_ad(trx);
+	ut_ad(trx->rseg);
+
+	rseg = trx->rseg;
+
+	ut_ad(mutex_own(&(trx->undo_mutex)));
+	mtr_start(&mtr);
+	ut_ad(!mutex_own(&kernel_mutex));
+	
+	mutex_enter(&(rseg->mutex));
+
+	undo = trx_undo_reuse_cached(rseg, type, trx->id, &mtr);
+	if(undo == NULL){ /*cached list中没有undo对象*/
+		undo = trx_undo_create(rseg, type, trx->id, &mtr);
+		if(undo == NULL){
+			mutex_exit(&(rseg->mutex));
+			mtr_commit(&mtr);
+
+			return(NULL);
+		}
+	}
+	/*将undo放入正式使用的undo list中*/
+	if (type == TRX_UNDO_INSERT) {
+		UT_LIST_ADD_FIRST(undo_list, rseg->insert_undo_list, undo);
+		ut_ad(trx->insert_undo == NULL);
+		trx->insert_undo = undo;
+	} 
+	else {
+		UT_LIST_ADD_FIRST(undo_list, rseg->update_undo_list, undo);
+		ut_ad(trx->update_undo == NULL);
+		trx->update_undo = undo;
+	}
+
+	if (trx->dict_operation)
+		trx_undo_mark_as_dict_operation(trx, undo, &mtr);
+
+	mutex_exit(&(rseg->mutex));
+	mtr_commit(&mtr);
+}
+
+/*在事务结束时设置对应undo segment的状态，便以释放和复用*/
+page_t* trx_undo_set_state_at_finish(trx_t* trx, trx_undo_t* undo, mtr_t* mtr)
+{
+	trx_usegf_t*	seg_hdr;
+	trx_upagef_t*	page_hdr;
+	page_t*		undo_page;
+	ulint		state;
+
+	ut_ad(trx && undo && mtr);
+
+	if (undo->id >= TRX_RSEG_N_SLOTS) {
+		fprintf(stderr, "InnoDB: Error: undo->id is %lu\n", undo->id);
+		mem_analyze_corruption((byte*)undo);
+		ut_a(0);
+	}
+
+	undo_page = trx_undo_page_get(undo->space, undo->hdr_page_no, mtr);
+	seg_hdr = undo_page + TRX_UNDO_SEG_HDR;
+	page_hdr = undo_page + TRX_UNDO_PAGE_HDR;
+
+	if(undo->size == 1 && mach_read_from_2(page_hdr + TRX_UNDO_PAGE_FREE) < TRX_UNDO_PAGE_REUSE_LIMIT) /*可以复用*/
+		state = TRX_UNDO_CACHED;
+	else if(undo->type == TRX_UNDO_INSERT)
+		state = TRX_UNDO_TO_FREE;
+	else
+		state = TRX_UNDO_TO_PURGE;
+
+	undo->state = state;
+	mlog_write_ulint(seg_hdr + TRX_UNDO_STATE, state, MLOG_2BYTES, mtr);
+
+	return undo_page;
+}
+
+/*对update undo segment的清空*/
+void trx_undo_update_cleanup(trx_t* trx, page_t* undo_page, mtr_t* mtr)
+{
+	trx_rseg_t*	rseg;
+	trx_undo_t*	undo;
+
+	undo = trx->update_undo;
+	rseg = trx->rseg;
+
+	ut_ad(mutex_own(&(rseg->mutex)));
+
+	trx_purge_add_update_undo_to_history(trx, undo_page, mtr);
+	UT_LIST_REMOVE(undo_list, rseg->update_undo_list, undo);
+	trx->update_undo = NULL;
+
+	if(undo->state == TRX_UNDO_CACHED) /*可以复用,放入cached list中*/
+		UT_LIST_ADD_FIRST(undo_list, rseg->update_undo_cached, undo);
+	else{
+		ut_ad(undo->state == TRX_UNDO_TO_PURGE);
+		trx_undo_mem_free(undo);
+	}
+}
+
+/*这个还不知道啥意思！？？先废弃对应页中的undo log 段数据，再回收到cached当中*/
+dulint trx_undo_update_cleanup_by_discard(trx_t* trx, mtr_t* mtr)
+{
+	trx_rseg_t*	rseg;
+	trx_undo_t*	undo;
+	page_t*		undo_page;
+
+	undo = trx->update_undo;
+	rseg = trx->rseg;
+
+	ut_ad(mutex_own(&(rseg->mutex)));
+	ut_ad(mutex_own(&kernel_mutex));
+	ut_ad(undo->size == 1);
+	ut_ad(undo->del_marks == FALSE);	
+	ut_ad(UT_LIST_GET_LEN(trx_sys->view_list) == 1);
+
+	undo_page = trx_undo_page_get(undo->space, undo->hdr_page_no, mtr);
+	trx_undo_discard_latest_update_undo(undo_page, mtr);
+
+	undo->state = TRX_UNDO_CACHED;
+	UT_LIST_REMOVE(undo_list, rseg->update_undo_list, undo);
+	trx->update_undo = NULL;
+	UT_LIST_ADD_FIRST(undo_list, rseg->update_undo_cached, undo);
+
+	mtr_commit(mtr);
+
+	return mtr->end_lsn;
+}
+
+/*对insert undo对象的清空*/
+void trx_undo_insert_cleanup(trx_t* trx)
+{
+	trx_undo_t*	undo;
+	trx_rseg_t*	rseg;
+
+	undo = trx->insert_undo;
+	ut_ad(undo);
+
+	rseg = trx->rseg;
+
+	mutex_enter(&(rseg->mutex));
+
+	UT_LIST_REMOVE(undo_list, rseg->insert_undo_list, undo);
+	trx->insert_undo = NULL;
+
+	if (undo->state == TRX_UNDO_CACHED)
+		UT_LIST_ADD_FIRST(undo_list, rseg->insert_undo_cached, undo);
+	else{
+		ut_ad(undo->state == TRX_UNDO_TO_FREE);
+		mutex_exit(&(rseg->mutex));
+		/*释放磁盘空间上的undo log segment*/
+		trx_undo_seg_free(undo);
+
+		mutex_enter(&(rseg->mutex));
+
+		ut_ad(rseg->curr_size > undo->size);
+		rseg->curr_size -= undo->size;
+		/*释放内存中的undo对象*/
+		trx_undo_mem_free(undo);
+	}
+
+	mutex_exit(&(rseg->mutex));
+}
 
