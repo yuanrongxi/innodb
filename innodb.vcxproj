@@ -217,6 +217,7 @@
     <ClCompile Include="sync0rw.cc" />
     <ClCompile Include="sync0sync.cc" />
     <ClCompile Include="thr0loc.cc" />
+    <ClCompile Include="trx0purge.cc" />
     <ClCompile Include="trx0rec.cc" />
     <ClCompile Include="trx0rseg.cc" />
     <ClCompile Include="trx0sys.c" />

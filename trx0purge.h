@@ -12,7 +12,7 @@
 
 extern trx_purge_t*		purge_sys;
 
-extern trx_undo_rec_t*	trx_purge_dummy_rec;
+extern trx_undo_rec_t	trx_purge_dummy_rec;
 
 #define TRX_PURGE_ON			1
 #define TRX_STOP_PURGE			2
@@ -27,17 +27,21 @@ struct trx_purge_struct
 	rw_lock_t*		latch;
 	read_view_t*	view;
 	mutex_t			mutex;
+
 	ulint			n_pages_handled;
 	ulint			handle_limit;
 	dulint			purge_trx_no;
 	dulint			purge_undo_no;
+
 	ibool			next_stored;
 	trx_rseg_t*		rseg;
 	ulint			page_no;
 	ulint			offset;
 	ulint			hdr_page_no;
 	ulint			hdr_offset;
+
 	trx_undo_arr_t*	arr;
+
 	mem_heap_t*		heap;
 };
 
@@ -47,7 +51,7 @@ ibool							trx_purge_update_undo_must_exist(dulint trx_id);
 
 void							trx_purge_sys_create();
 
-void							trx_purge_add_update_undo_to_history(trx_t* trx, pag_t* undo_page, mtr_t* mtr);
+void							trx_purge_add_update_undo_to_history(trx_t* trx, page_t* undo_page, mtr_t* mtr);
 
 trx_undo_rec_t*					trx_purge_fetch_next_rec(dulint* roll_ptr, trx_undo_inf_t** cell, mem_heap_t* heap);
 

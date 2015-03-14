@@ -542,5 +542,8 @@
     <ClCompile Include="trx0undo.cc">
       <Filter>trx</Filter>
     </ClCompile>
+    <ClCompile Include="trx0purge.cc">
+      <Filter>trx</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
