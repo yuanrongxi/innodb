@@ -378,6 +378,9 @@
     <ClInclude Include="trx0undo.h">
       <Filter>trx</Filter>
     </ClInclude>
+    <ClInclude Include="trx0roll.h">
+      <Filter>trx</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -543,6 +546,9 @@
       <Filter>trx</Filter>
     </ClCompile>
     <ClCompile Include="trx0purge.cc">
+      <Filter>trx</Filter>
+    </ClCompile>
+    <ClCompile Include="trx0roll.cc">
       <Filter>trx</Filter>
     </ClCompile>
   </ItemGroup>

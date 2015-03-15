@@ -160,6 +160,7 @@
     <ClInclude Include="thr0loc.h" />
     <ClInclude Include="trx0purge.h" />
     <ClInclude Include="trx0rec.h" />
+    <ClInclude Include="trx0roll.h" />
     <ClInclude Include="trx0rseg.h" />
     <ClInclude Include="trx0sys.h" />
     <ClInclude Include="trx0trx.h" />
@@ -219,6 +220,7 @@
     <ClCompile Include="thr0loc.cc" />
     <ClCompile Include="trx0purge.cc" />
     <ClCompile Include="trx0rec.cc" />
+    <ClCompile Include="trx0roll.cc" />
     <ClCompile Include="trx0rseg.cc" />
     <ClCompile Include="trx0sys.c" />
     <ClCompile Include="trx0trx.cc" />
