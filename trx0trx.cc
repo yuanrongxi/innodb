@@ -249,14 +249,13 @@ static void trx_list_insert_ordered(trx_t* trx)
 
 		if(trx2 == NULL){
 			UT_LIST_ADD_FIRST(trx_list, trx_sys->trx_list, trx);
-		} 
+		}
 		else{
 			UT_LIST_INSERT_AFTER(trx_list, trx_sys->trx_list, trx2, trx);
 		}
 	}
-	else{
+	else
 		UT_LIST_ADD_FIRST(trx_list, trx_sys->trx_list, trx);
-	}
 }
 
 /*在innodb刚开始启动时，初始化trx_sys->trx_list,通过rseg_list来做恢复*/
@@ -417,7 +416,7 @@ void trx_commit_off_kernel(trx_t* trx)
 	ut_ad(mutex_own(&kernel_mutex));
 
 	rseg = trx->rseg;
-	if(trx->insert_undo != NULL && trx->update_undo != NULL){
+	if(trx->insert_undo != NULL && trx->update_undo != NULL){ /*事务修改了记录和page，必须flush log*/
 		mutex_exit(&kernel_mutex);
 
 		mtr_start(&mtr);
