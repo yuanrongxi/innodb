@@ -710,7 +710,7 @@ trx_undo_rec_t* trx_undo_get_undo_rec_low(dulint roll_ptr, mem_heap_t* heap)
 
 	mstr_start(&mtr);
 
-	undo_page = trx_undo_pageg_get_s_latched(rseg->space, page_no, &mtr);
+	undo_page = trx_undo_page_get_s_latched(rseg->space, page_no, &mtr);
 	undo_rec = trx_undo_rec_copy(undo_page + offset, heap);
 
 	mtr_commit(&mtr);
@@ -730,6 +730,7 @@ ulint trx_undo_get_undo_rec(dulint roll_ptr, dulint trx_id, trx_undo_rec_t** und
 	return DB_SUCCESS;
 }
 
+/*用于多版本并发（mvcc）*/
 ulint trx_undo_prev_version_build(rec_t* index_rec, mtr_t* index_mtr, rec_t* rec, dict_index_t* index, mem_heap_t* heap, rec_t** old_vers)
 {
 	trx_undo_rec_t*	undo_rec;
