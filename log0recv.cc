@@ -409,6 +409,7 @@ void recv_scan_log_seg_for_backup(byte* buf, ulint buf_len, dulint* scanned_lsn,
 	}
 }
 
+/*»Ö¸´redo logÖÐµÄ²Ù×÷*/
 static byte* recv_parse_or_apply_log_rec_body(byte type, byte* ptr, byte* end_ptr, page_t* page, mtr_t* mtr)
 {
 	byte* new_ptr;

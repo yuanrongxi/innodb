@@ -44,7 +44,7 @@ trx_undo_rec_t* trx_undo_get_prev_rec(trx_undo_rec_t* rec, ulint page_no, ulint 
 		return trx_undo_get_prev_rec_from_prev_page(rec, page_no, offset, mtr);
 }
 /*获得rec的下一条记录且这条记录在后一页中,undo_page后一页的fil_addr保存在TRX_UNDO_PAGE_NODE当中*/
-static trx_undo_rec_t* trx_undo_get_next_rec_from_next_page(page_t* page, ulint page_no, uliint offset, ulint mode, mtr_t* mtr)
+static trx_undo_rec_t* trx_undo_get_next_rec_from_next_page(page_t* page, ulint page_no, ulint offset, ulint mode, mtr_t* mtr)
 {
 	trx_ulogf_t*	log_hdr;
 	ulint		next_page_no;
@@ -52,15 +52,15 @@ static trx_undo_rec_t* trx_undo_get_next_rec_from_next_page(page_t* page, ulint 
 	ulint		space;
 	ulint		next;
 
-	if (page_no == buf_frame_get_page_no(undo_page)){ /*一个页中有多个事务的undo log,判断如果有多个，说明已经到了undo log的最前面*/
-		log_hdr = undo_page + offset;
+	if (page_no == buf_frame_get_page_no(page)){ /*一个页中有多个事务的undo log,判断如果有多个，说明已经到了undo log的最前面*/
+		log_hdr = page + offset;
 		next = mach_read_from_2(log_hdr + TRX_UNDO_NEXT_LOG);
 		if (next != 0)
 			return NULL;
 	}
 
-	space = buf_frame_get_space_id(undo_page);
-	next_page_no = flst_get_next_addr(undo_page + TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_NODE, mtr).page;
+	space = buf_frame_get_space_id(page);
+	next_page_no = flst_get_next_addr(page + TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_NODE, mtr).page;
 	if(next_page_no == FIL_NULL) /*没有后一页*/
 		return NULL;
 
@@ -99,7 +99,7 @@ trx_undo_rec_t* trx_undo_get_first_rec(ulint space, ulint page_no, ulint offset,
 	if(rec == NULL)
 		rec = trx_undo_get_next_rec_from_next_page(undo_page, page_no, offset, mode, mtr);
 
-	return ret;
+	return rec;
 }
 
 /*产生一条undo page初始化的mini transaction log*/
@@ -217,9 +217,9 @@ static ulint trx_undo_header_create(page_t* undo_page, dulint trx_id, mtr_t* mtr
 	page_hdr = undo_page + TRX_UNDO_PAGE_HDR;
 	seg_hdr = undo_page + TRX_UNDO_SEG_HDR;
 
-	/*去的可写空闲位置*/
+	/*获取可写空闲位置*/
 	free = mach_read_from_2(page_hdr + TRX_UNDO_PAGE_FREE);
-	log_hdr = undo + free;
+	log_hdr = undo_page + free;
 
 	new_free = free + TRX_UNDO_LOG_HDR_SIZE;
 	ut_ad(new_free <= UNIV_PAGE_SIZE);
@@ -261,6 +261,8 @@ UNIV_INLINE void trx_undo_insert_header_reuse_log(page_t* undo_header, dulint tr
 /*解读和重演undo log page header的创建过程mini transaction log*/
 byte* trx_undo_parse_page_header(ulint type, byte* ptr, byte* end_ptr, page_t* page, mtr_t* mtr)
 {
+	dulint trx_id;
+
 	ptr = mach_dulint_parse_compressed(ptr, end_ptr, &trx_id);
 	if(ptr == NULL)
 		return NULL;
@@ -350,7 +352,7 @@ static void trx_undo_discard_latest_update_undo(page_t* undo_page, mtr_t* mtr)
 		mach_write_to_2(page_hdr + TRX_UNDO_PAGE_START, mach_read_from_2(prev_log_hdr + TRX_UNDO_LOG_START));
 		mach_write_to_2(prev_log_hdr + TRX_UNDO_NEXT_LOG, 0);
 	}
-	/*重置页的free和状态(TRX_UNDO_CACHED)*/
+	/*重置页的free和状态(TRX_UNDO_CACHED),通过purge来做页回收*/
 	mach_write_to_2(page_hdr + TRX_UNDO_PAGE_FREE, free);
 	mach_write_to_2(seg_hdr + TRX_UNDO_STATE, TRX_UNDO_CACHED);
 	mach_write_to_2(seg_hdr + TRX_UNDO_LAST_LOG, prev_hdr_offset);
@@ -375,7 +377,7 @@ ulint trx_undo_add_page(trx_t* trx, trx_undo_t* undo, mtr_t* mtr)
 	ut_ad(mutex_own(&(rseg->mutex)));
 
 	/*回滚段到了上限*/
-	if(rseg->curr_size == rseg->max_size)
+	if(rseg->curr_size >= rseg->max_size)
 		return FIL_NULL;
 
 	header_page = trx_undo_page_get(undo->space, undo->hdr_page_no, mtr);
@@ -394,6 +396,7 @@ ulint trx_undo_add_page(trx_t* trx, trx_undo_t* undo, mtr_t* mtr)
 	/*建立对应关系*/
 	undo->last_page_no = page_no;
 	new_page = trx_undo_page_get(undo->space, page_no, mtr);
+	/*进行undo page页初始化*/
 	trx_undo_page_init(new_page, undo->type, mtr);
 	flst_add_last(header_page + TRX_UNDO_SEG_HDR + TRX_UNDO_PAGE_LIST, new_page + TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_NODE, mtr);
 	/*更改undo和rollback segment的状态*/
@@ -403,7 +406,7 @@ ulint trx_undo_add_page(trx_t* trx, trx_undo_t* undo, mtr_t* mtr)
 	return page_no;
 }
 
-/*释放一个不是头页的undo log page*/
+/*释放一个不是undo log segment头页的undo log page*/
 static ulint trx_undo_free_page(trx_rseg_t* rseg, ibool in_history, ulint space, ulint hdr_page_no, ulint offset, ulint page_no, mtr_t* mtr)
 {
 	page_t*		header_page;

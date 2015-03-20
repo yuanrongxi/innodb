@@ -71,6 +71,9 @@
     <Filter Include="que">
       <UniqueIdentifier>{67c38e17-fb0d-4564-a863-bfb54d11d641}</UniqueIdentifier>
     </Filter>
+    <Filter Include="read">
+      <UniqueIdentifier>{22679d4f-b740-418e-8414-0e7d614993c0}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -162,6 +165,9 @@
     </None>
     <None Include="trx0undo.inl">
       <Filter>trx</Filter>
+    </None>
+    <None Include="read0read.inl">
+      <Filter>read</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -381,6 +387,9 @@
     <ClInclude Include="trx0roll.h">
       <Filter>trx</Filter>
     </ClInclude>
+    <ClInclude Include="read0read.h">
+      <Filter>read</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -550,6 +559,9 @@
     </ClCompile>
     <ClCompile Include="trx0roll.cc">
       <Filter>trx</Filter>
+    </ClCompile>
+    <ClCompile Include="read0read.cc">
+      <Filter>read</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

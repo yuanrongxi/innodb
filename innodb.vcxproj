@@ -95,6 +95,7 @@
     <None Include="mtr0mtr.inl" />
     <None Include="page0cur.inl" />
     <None Include="page0page.inl" />
+    <None Include="read0read.inl" />
     <None Include="rem0cmp.inl" />
     <None Include="rem0rec.inl" />
     <None Include="trx0purge.inl" />
@@ -150,6 +151,7 @@
     <ClInclude Include="page0types.h" />
     <ClInclude Include="que0que.h" />
     <ClInclude Include="que0types.h" />
+    <ClInclude Include="read0read.h" />
     <ClInclude Include="rem0cmp.h" />
     <ClInclude Include="rem0rec.h" />
     <ClInclude Include="rem0types.h" />
@@ -212,6 +214,7 @@
     <ClCompile Include="os0thread.cc" />
     <ClCompile Include="page0cur.cc" />
     <ClCompile Include="page0page.cc" />
+    <ClCompile Include="read0read.cc" />
     <ClCompile Include="rem0cmp.cc" />
     <ClCompile Include="rem0rec.cc" />
     <ClCompile Include="sync0arr.cc" />

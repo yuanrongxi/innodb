@@ -215,7 +215,7 @@ byte* trx_undo_rec_get_row_ref(byte* ptr, dict_index_t* index, dtuple_t** ref, m
 	*ref = dtuple_create(heap, ref_len);
 
 	dict_index_copy_types(*ref, index, ref_len);
-	/*将undo log rec记录中读取各个列的长度*/
+	/*将undo log rec记录中读取各个列的长度,并将列指针设置到dtuple中*/
 	for(i = 0; i < ref_len; i++){
 		dfield = dtuple_get_nth_field(*ref, i);
 		ptr = trx_undo_rec_get_col_val(ptr, &field, &len);
@@ -526,7 +526,7 @@ byte* trx_undo_update_rec_get_update(byte* ptr, dict_index_t* index, ulint type,
 	return ptr;
 }
 
-/*从undo update rec中读读取一行记录，并存储在row中*/
+/*从undo update rec(ptr)中读读取一行记录，并存储在row中*/
 byte* trx_undo_rec_get_partial_row(byte* ptr, dict_index_t* index, dtuple** row, mem_heap_t* heap)
 {
 	dfield_t*	dfield;
@@ -730,7 +730,7 @@ ulint trx_undo_get_undo_rec(dulint roll_ptr, dulint trx_id, trx_undo_rec_t** und
 	return DB_SUCCESS;
 }
 
-/*用于多版本并发（mvcc）*/
+/*用于多版本并发（mvcc,读取rec对应记录的历史版本记录*/
 ulint trx_undo_prev_version_build(rec_t* index_rec, mtr_t* index_mtr, rec_t* rec, dict_index_t* index, mem_heap_t* heap, rec_t** old_vers)
 {
 	trx_undo_rec_t*	undo_rec;

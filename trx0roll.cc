@@ -525,7 +525,7 @@ void trx_rollback(trx_t* trx, trx_sig_t* sig, que_thr_t** next_thr)
 	ut_ad(thr);
 
 	if(next_thr && (*next_ptr == NULL))
-		*next_ thr = thr;
+		*next_thr = thr;
 	else
 		srv_que_task_enqueue_low(thr);
 }

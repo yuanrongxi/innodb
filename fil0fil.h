@@ -110,7 +110,7 @@ ulint		fil_page_get_prev(byte* page);
 
 ulint		fil_page_get_next(byte* page);
 
-void		fil_page_set_type(byte* page);
+void		fil_page_set_type(byte* page, ulint type);
 
 ulint		fil_page_get_type(byte* page);
 

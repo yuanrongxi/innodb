@@ -514,7 +514,7 @@ void trx_cleanup_at_db_startup(trx_t* trx)
 	UT_LIST_REMOVE(trx_list, trx_sys->trx_list, trx);
 }
 
-/*分配一个读视图，一般在一个新事务开始的时候调用这个函数*/
+/*为事务创建一个可见依赖对象*/
 read_view_t* trx_assign_read_view(trx_t* trx)
 {
 	ut_ad(trx->conc_state == TRX_ACTIVE);
@@ -524,14 +524,14 @@ read_view_t* trx_assign_read_view(trx_t* trx)
 
 	mutex_enter(&kernel_mutex);
 
-	if(!trx->read_view)
-		trx->read_view = read_view_open_now(trx, trx-read_view_heap);
+	if(!trx->read_view) /*构建一个事务可见依赖*/
+		trx->read_view = read_view_open_now(trx, trx->read_view_heap);
 
 	mutex_exit(&kernel_mutex);
 }
 
 /*提交一个事务，并将事务相关的TRX_SIG_COMMIT删除*/
-static void trx_handle_commit_sig_off_kernel(trx_t* trx, que_thr_t* next_thr)
+static void trx_handle_commit_sig_off_kernel(trx_t* trx, que_thr_t** next_thr)
 {
 	trx_sig_t*	sig;
 	trx_sig_t*	next_sig;
@@ -732,7 +732,7 @@ void trx_end_signal_handling(trx_t* trx)
 }
 
 /*激活一个事务的signal*/
-void trx_sig_start_handle(trx_t* trx, que_thr_t* next_thr)
+void trx_sig_start_handle(trx_t* trx, que_thr_t** next_thr)
 {
 	trx_sig_t*	sig;
 	ulint		type;
@@ -778,7 +778,7 @@ loop:
 	}
 	else if(type == TRX_SIG_ERROR_OCCURRED){ /*事务信号执行错误，回滚*/
 		trx_rollback(trx, sig, next_thr);
-		return 
+		return ;
 	}
 	else if(type == TRX_SIG_BREAK_EXECUTION){
 		trx_sig_reply(trx, sig, next_thr);
@@ -826,7 +826,7 @@ void trx_sig_remove(trx_t* trx, trx_sig_t* sig)
 	ut_ad(sig->reply == FALSE);
 	ut_ad(sig->receiver == NULL);
 
-	UT_LIST_REMOVE(signals, trx->signals, sig));
+	UT_LIST_REMOVE(signals, trx->signals, sig);
 
 	if(sig != &(trx->sig))
 		mem_free(sig);
