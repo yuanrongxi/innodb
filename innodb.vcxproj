@@ -95,6 +95,7 @@
     <None Include="mtr0mtr.inl" />
     <None Include="page0cur.inl" />
     <None Include="page0page.inl" />
+    <None Include="que0que.inl" />
     <None Include="read0read.inl" />
     <None Include="rem0cmp.inl" />
     <None Include="rem0rec.inl" />
@@ -214,6 +215,7 @@
     <ClCompile Include="os0thread.cc" />
     <ClCompile Include="page0cur.cc" />
     <ClCompile Include="page0page.cc" />
+    <ClCompile Include="que0que.cc" />
     <ClCompile Include="read0read.cc" />
     <ClCompile Include="rem0cmp.cc" />
     <ClCompile Include="rem0rec.cc" />

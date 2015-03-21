@@ -169,6 +169,9 @@
     <None Include="read0read.inl">
       <Filter>read</Filter>
     </None>
+    <None Include="que0que.inl">
+      <Filter>que</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -562,6 +565,9 @@
     </ClCompile>
     <ClCompile Include="read0read.cc">
       <Filter>read</Filter>
+    </ClCompile>
+    <ClCompile Include="que0que.cc">
+      <Filter>que</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
