@@ -728,7 +728,7 @@ void trx_end_signal_handling(trx_t* trx)
 	trx->graph = trx->graph_before_signal_handling;
 
 	if(trx->graph && trx->sess->state == SESS_ERROR)
-		que_fork_error_handler(trx, trx->graph);
+		que_fork_error_handle(trx, trx->graph);
 }
 
 /*激活一个事务的signal*/
