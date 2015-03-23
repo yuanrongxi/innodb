@@ -39,7 +39,7 @@ static trx_undo_inf_t* trx_purge_arr_store_info(dulint trx_no, dulint undo_no)
 		cell = trx_undo_arr_get_nth_info(arr, i);
 		if(!cell->in_use){
 			cell->undo_no = undo_no;
-			cell->trx = trx_no;
+			cell->trx_no = trx_no;
 			cell->in_use = TRUE;
 
 			arr->n_used ++;
@@ -98,7 +98,7 @@ static void trx_purge_arr_get_biggest(trx_undo_arr_t* arr, dulint* trx_no, dulin
 	}
 }
 
-/*创建一个query graph,并在这个query graph执行purge?!*/
+/*创建一个query graph,并在这个query graph执行purge任务*/
 static que_t* trx_purge_graph_build()
 {
 	mem_heap_t*	heap;
@@ -145,6 +145,7 @@ void trx_purge_sys_create()
 	purge_sys->trx = purge_sys->sess->trx;
 	purge_sys->trx->type = TRX_PURGE;
 
+	/*创建一个purge query graph对象*/
 	ut_a(trx_start_low(purge_sys->trx, ULINT_UNDEFINED));
 	purge_sys->query = trx_purge_graph_build();
 	purge_sys->view = read_view_oldest_copy_or_open_new(NULL, purge_sys->heap);
@@ -333,7 +334,7 @@ loop:
 }
 
 /*删除所有rollback segment的history list中所有不必要的undo log*/
-static void trx_purge_truncate_history(trx_rseg_t* rseg, dulint limit_trx_no, dulint limit_undo_no)
+static void trx_purge_truncate_history()
 {
 	trx_rseg_t*	rseg;
 	dulint		limit_trx_no;
@@ -361,7 +362,7 @@ static void trx_purge_truncate_history(trx_rseg_t* rseg, dulint limit_trx_no, du
 		rseg = UT_LIST_GET_NEXT(rseg_list, rseg);
 	}
 }
-
+/*已经没有正在purge当中的undo log segment,从新重history list中进行purge undo log*/
 UNIV_INLINE ibool trx_purge_truncate_if_arr_empty()
 {
 	ut_ad(mutex_own(&(purge_sys->mutex)));
@@ -475,7 +476,7 @@ static void trx_purge_choose_next_log()
 	mtr_start(&mtr);
 	if(!min_rseg->last_del_marks)
 		rec = &trx_purge_dummy_rec;
-	else{
+	else{ /*确定min undo log rec的句柄*/
 		rec = trx_undo_get_first_rec(space, page_no, offset, RW_S_LATCH, &mtr);
 		if(rec == NULL)
 			rec = &trx_purge_dummy_rec;
@@ -494,7 +495,7 @@ static void trx_purge_choose_next_log()
 		purge_sys->page_no = page_no;
 		purge_sys->offset = 0;
 	}
-	else{ /*purge起始的位置信息*/
+	else{ /*purge起始的位置信息(undo no, page no, offset)*/
 		purge_sys->purge_undo_no = trx_undo_rec_get_undo_no(rec);
 		purge_sys->page_no = buf_frame_get_page_no(rec);
 		purge_sys->offset = rec - buf_frame_align(rec);
@@ -593,7 +594,7 @@ trx_undo_rec_t* trx_purge_fetch_next_rec(dulint* roll_ptr, trx_undo_inf_t** cell
 
 	mutex_enter(&(purge_sys->mutex));
 	if(purge_sys->state == TRX_STOP_PURGE){ /*purge处于STOP状态*/
-		trx_purge_truncate_if_arr_empty(); /*删除掉purge_sys->arr中不必要的数据*/
+		trx_purge_truncate_if_arr_empty(); /*删除掉rseg history list中不必要的数据*/
 		mutex_exit(&(purge_sys->mutex));
 		return NULL;
 	}
@@ -633,7 +634,7 @@ trx_undo_rec_t* trx_purge_fetch_next_rec(dulint* roll_ptr, trx_undo_inf_t** cell
 
 	/*构建一个roll ptr*/
 	*roll_ptr = trx_undo_build_roll_ptr(FALSE, purge_sys->rseg->id, purge_sys->page_no, purge_sys->offset);
-	/*在purge设置一个cell状态信息对象*/
+	/*在purge设置一个cell状态信息对象,标识正在purge*/
 	*cell = trx_purge_arr_store_info(purge_sys->purge_trx_no, purge_sys->purge_undo_no);
 
 	ut_ad(ut_dulint_cmp(purge_sys->purge_trx_no, (purge_sys->view)->low_limit_no) < 0);
@@ -697,7 +698,7 @@ ulint trx_purge()
 
 	que_run_threads(thr);
 
-	/*答应开始purge的page个数*/
+	/*打印开始purge的page个数*/
 	if(srv_print_thread_releases)
 		printf("Purge ends; pages handled %lu\n", purge_sys->n_pages_handled);
 

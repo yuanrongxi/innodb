@@ -24,7 +24,7 @@ UNIV_INLINE trx_undo_inf_t* trx_undo_arr_get_nth_info(trx_undo_arr_t* arr, ulint
 	return arr->infos + n;
 }
 
-/*mysql调用执行回滚事务操作，回滚到savepoint处*/
+/*mysql调用执行回滚事务操作，回滚到savepoint处,这个应该是用mysql thread调用回滚*/
 int trx_general_rollback_for_mysql(trx_t* trx, ibool partial, trx_savept_t* savept)
 {
 	mem_heap_t*	heap;
@@ -394,7 +394,7 @@ static trx_undo_rec_t* trx_roll_pop_top_rec(trx_t* trx, trx_undo_t* undo, mtr_t*
 	return undo_page + offset;
 }
 
-/*这个函数没弄懂！！！*/
+/*这个函数没弄懂！！！获得需要回滚的记录,是undo no最大的记录*/
 trx_undo_rec_t* trx_roll_pop_top_rec_of_trx(trx_t* trx, dulint limit, dulint* roll_ptr, mem_heap_t* heap)
 {
 	trx_undo_t*	undo;
@@ -458,7 +458,7 @@ try_again:
 	ut_ad(ut_dulint_cmp(ut_dulint_add(undo_no, 1), trx->undo_no) == 0);
 	trx->undo_no = undo_no;
 
-	/*将undo no放入trx->arr中，如果已经在arr中，*/
+	/*将undo no放入trx->arr中，如果已经在arr中，表示其他的任务可能在操作这个undo no对应的rec*/
 	if(!trx_undo_arr_store_info(trx, undo_no)){
 		mutex_exit(&(trx->undo_mutex));
 		mtr_commit(&mtr);

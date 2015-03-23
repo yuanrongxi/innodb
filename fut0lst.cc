@@ -242,7 +242,7 @@ void flst_cut_end(flst_base_node_t* base, flst_node_t* node2, ulint n_nodes, mtr
 	ut_ad(mtr_memo_contains(mtr, buf_block_align(node2), MTR_MEMO_PAGE_X_FIX));
 	ut_ad(n_nodes > 0);
 
-	buf_ptr_get_fsp_addr(node2, mtr);
+	buf_ptr_get_fsp_addr(node2, &space, mtr);
 
 	node1_addr = flst_get_prev_addr(node2, mtr);
 	if(!fil_addr_is_null(node1_addr)){

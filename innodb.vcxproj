@@ -156,6 +156,7 @@
     <ClInclude Include="rem0cmp.h" />
     <ClInclude Include="rem0rec.h" />
     <ClInclude Include="rem0types.h" />
+    <ClInclude Include="srv0que.h" />
     <ClInclude Include="sync0arr.h" />
     <ClInclude Include="sync0rw.h" />
     <ClInclude Include="sync0sync.h" />
@@ -219,6 +220,7 @@
     <ClCompile Include="read0read.cc" />
     <ClCompile Include="rem0cmp.cc" />
     <ClCompile Include="rem0rec.cc" />
+    <ClCompile Include="srv0que.cc" />
     <ClCompile Include="sync0arr.cc" />
     <ClCompile Include="sync0rw.cc" />
     <ClCompile Include="sync0sync.cc" />

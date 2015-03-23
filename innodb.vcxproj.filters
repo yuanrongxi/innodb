@@ -74,6 +74,9 @@
     <Filter Include="read">
       <UniqueIdentifier>{22679d4f-b740-418e-8414-0e7d614993c0}</UniqueIdentifier>
     </Filter>
+    <Filter Include="srv">
+      <UniqueIdentifier>{f480f1d4-d245-4ca9-aa44-7b6ac3d196d1}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -393,6 +396,9 @@
     <ClInclude Include="read0read.h">
       <Filter>read</Filter>
     </ClInclude>
+    <ClInclude Include="srv0que.h">
+      <Filter>srv</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -568,6 +574,9 @@
     </ClCompile>
     <ClCompile Include="que0que.cc">
       <Filter>que</Filter>
+    </ClCompile>
+    <ClCompile Include="srv0que.cc">
+      <Filter>srv</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
