@@ -312,7 +312,7 @@ static void trx_undo_arr_remove_info(trx_undo_arr_t* arr, dulint undo_no)
 }
 
 /*获得arr中最大undo no*/
-static dulint trx_undo_arr_get_nth_info(trx_undo_arr_t* arr, ulint n)
+static dulint trx_undo_arr_get_biggest(trx_undo_arr_t* arr)
 {
 	trx_undo_inf_t*	cell;
 	ulint		n_used;
