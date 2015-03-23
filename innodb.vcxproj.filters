@@ -399,6 +399,9 @@
     <ClInclude Include="srv0que.h">
       <Filter>srv</Filter>
     </ClInclude>
+    <ClInclude Include="dict0mem.h">
+      <Filter>dict</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -577,6 +580,9 @@
     </ClCompile>
     <ClCompile Include="srv0que.cc">
       <Filter>srv</Filter>
+    </ClCompile>
+    <ClCompile Include="dict0mem.cc">
+      <Filter>dict</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

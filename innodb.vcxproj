@@ -122,6 +122,7 @@
     <ClInclude Include="data0type.h" />
     <ClInclude Include="data0types.h" />
     <ClInclude Include="db0err.h" />
+    <ClInclude Include="dict0mem.h" />
     <ClInclude Include="dict0types.h" />
     <ClInclude Include="dyn0dyn.h" />
     <ClInclude Include="fil0fil.h" />
@@ -194,6 +195,7 @@
     <ClCompile Include="buf0rea.cc" />
     <ClCompile Include="data0data.cc" />
     <ClCompile Include="data0type.cc" />
+    <ClCompile Include="dict0mem.cc" />
     <ClCompile Include="dyn0dyn.cc" />
     <ClCompile Include="fil0fil.cc" />
     <ClCompile Include="fsp0fsp.cc" />
