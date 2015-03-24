@@ -56,7 +56,7 @@ dict_hdr_t* dict_hdr_get(mtr_t* mtr)
 	return header;
 }
 
-/*获得一个table或者索引或者索引树的新ID*/
+/*获得一个table或者索引或者索引树的新ID值，根据type对应的偏移而确定*/
 dulint dict_hdr_get_new_id(ulint type)
 {
 	dict_hdr_t*	dict_hdr;
