@@ -122,6 +122,7 @@
     <ClInclude Include="data0type.h" />
     <ClInclude Include="data0types.h" />
     <ClInclude Include="db0err.h" />
+    <ClInclude Include="dict0boot.h" />
     <ClInclude Include="dict0mem.h" />
     <ClInclude Include="dict0types.h" />
     <ClInclude Include="dyn0dyn.h" />
@@ -151,6 +152,7 @@
     <ClInclude Include="page0cur.h" />
     <ClInclude Include="page0page.h" />
     <ClInclude Include="page0types.h" />
+    <ClInclude Include="pars0types.h" />
     <ClInclude Include="que0que.h" />
     <ClInclude Include="que0types.h" />
     <ClInclude Include="read0read.h" />
@@ -195,6 +197,7 @@
     <ClCompile Include="buf0rea.cc" />
     <ClCompile Include="data0data.cc" />
     <ClCompile Include="data0type.cc" />
+    <ClCompile Include="dict0boot.cc" />
     <ClCompile Include="dict0mem.cc" />
     <ClCompile Include="dyn0dyn.cc" />
     <ClCompile Include="fil0fil.cc" />

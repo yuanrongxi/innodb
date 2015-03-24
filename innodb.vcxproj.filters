@@ -77,6 +77,9 @@
     <Filter Include="srv">
       <UniqueIdentifier>{f480f1d4-d245-4ca9-aa44-7b6ac3d196d1}</UniqueIdentifier>
     </Filter>
+    <Filter Include="row">
+      <UniqueIdentifier>{35908b6f-a35d-4e77-b84f-5cf30fb9d494}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -402,6 +405,12 @@
     <ClInclude Include="dict0mem.h">
       <Filter>dict</Filter>
     </ClInclude>
+    <ClInclude Include="pars0types.h">
+      <Filter>row</Filter>
+    </ClInclude>
+    <ClInclude Include="dict0boot.h">
+      <Filter>dict</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -582,6 +591,9 @@
       <Filter>srv</Filter>
     </ClCompile>
     <ClCompile Include="dict0mem.cc">
+      <Filter>dict</Filter>
+    </ClCompile>
+    <ClCompile Include="dict0boot.cc">
       <Filter>dict</Filter>
     </ClCompile>
   </ItemGroup>

@@ -403,7 +403,7 @@ ulint btr_create(ulint type, ulint space, dulint index_id, mtr_t* mtr)
 	page = page_create(frame, mtr);
 
 	/*ÉèÖÃpageµÄindex id*/
-	btr_page_set_index_id(page, 0, mtr);
+	btr_page_set_index_id(page, index_id, mtr);
 	/*ÉèÖÃLEVEL*/
 	btr_page_set_level(page, 0, mtr);
 

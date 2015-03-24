@@ -116,6 +116,7 @@ struct dict_foreign_struct
 #define DICT_FOREIGN_ON_DELETE_CASCADE	1
 #define DICT_FOREIGN_ON_DELETE_SET_NULL	2
 
+#define	DICT_INDEX_MAGIC_N	76789786
 /*数据库表结构定义*/
 struct dict_table_struct
 {
@@ -166,7 +167,7 @@ struct dict_proc_struct
 {
 	mem_heap_t*			heap;
 	char*				name;
-	char*				sql_stirng;
+	char*				sql_string;
 	hash_node_t			name_hash;
 	UT_LIST_BASE_NODE_T(que_fork_t) graphs;
 	ulint				mem_fix;
