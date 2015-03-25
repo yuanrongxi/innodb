@@ -90,7 +90,7 @@ UNIV_INLINE void					dict_table_release(dict_table_t* table);
 
 UNIV_INLINE dict_table_t*			dict_table_check_if_in_cache_low(char* table_name);
 
-UNIV_INLINE	dict_table_t*			dict_table_get_low();
+UNIV_INLINE	dict_table_t*			dict_table_get_low(char* name);
 
 UNIV_INLINE dict_index_t*			dict_table_get_index(dict_table_t* table, char* name);
 

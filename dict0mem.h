@@ -47,7 +47,7 @@ struct dict_col_struct
 
 struct dict_field_struct
 {
-	dict_col_t*					col;				/*指向索引列的指针	*/
+	dict_col_t*					col;				/*索引不包含的列？*/
 	char*						name;				/*列名*/
 	ulint						order;				/*排序标识*/
 };
