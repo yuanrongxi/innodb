@@ -83,6 +83,7 @@
     <None Include="buf0lru.inl" />
     <None Include="data0data.inl" />
     <None Include="data0type.inl" />
+    <None Include="dict0dict.inl" />
     <None Include="dyn0dyn.inl" />
     <None Include="fsp0fsp.inl" />
     <None Include="fut0fut.inl" />
@@ -199,6 +200,7 @@
     <ClCompile Include="data0data.cc" />
     <ClCompile Include="data0type.cc" />
     <ClCompile Include="dict0boot.cc" />
+    <ClCompile Include="dict0dict.cc" />
     <ClCompile Include="dict0mem.cc" />
     <ClCompile Include="dyn0dyn.cc" />
     <ClCompile Include="fil0fil.cc" />

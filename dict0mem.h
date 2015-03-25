@@ -31,6 +31,8 @@
 #define	DICT_TABLE_CLUSTER_MEMBER	2
 #define	DICT_TABLE_CLUSTER		3
 
+#define	DICT_TREE_MAGIC_N	7545676
+
 struct dict_col_struct
 {
 	hash_node_t					hash;				/*¹þÏ£½Úµã*/
@@ -143,6 +145,7 @@ struct dict_table_struct
 
 	dulint		mix_id;					/* */
 	ulint		mix_len;				/**/
+	ulint		mix_id_len;
 	byte		mix_id_buf[12];			/**/
 	char*		cluster_name;			/**/
 

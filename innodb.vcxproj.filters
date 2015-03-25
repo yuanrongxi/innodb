@@ -178,6 +178,9 @@
     <None Include="que0que.inl">
       <Filter>que</Filter>
     </None>
+    <None Include="dict0dict.inl">
+      <Filter>dict</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -597,6 +600,9 @@
       <Filter>dict</Filter>
     </ClCompile>
     <ClCompile Include="dict0boot.cc">
+      <Filter>dict</Filter>
+    </ClCompile>
+    <ClCompile Include="dict0dict.cc">
       <Filter>dict</Filter>
     </ClCompile>
   </ItemGroup>

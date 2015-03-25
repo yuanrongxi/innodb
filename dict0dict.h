@@ -142,7 +142,9 @@ UNIV_INLINE ulint					dict_index_get_nth_col_no(dict_index_t* index, ulint pos);
 
 ulint								dict_index_get_nth_col_pos(dict_index_t* index, ulint n);
 
-UNIV_INLINE ulint					dict_table_get_nth_col_pos(dict_table_t* table, ulint type);
+ulint								dict_table_get_nth_col_pos(dict_table_t* table, ulint n);
+
+UNIV_INLINE ulint					dict_index_get_sys_col_pos(dict_index_t* index, ulint type);
 
 void								dict_index_copy_types(dtuple_t* tuple, dict_index_t* index, ulint n_fields);
 
@@ -199,6 +201,9 @@ void								dict_update_statistics(dict_table_t* table);
 void								dict_mutex_enter_for_mysql();
 
 void								dict_mutex_exit_for_mysql();
+
+#include "dict0dict.inl"
+
 #endif
 
 
