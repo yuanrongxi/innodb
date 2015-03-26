@@ -417,6 +417,9 @@
     <ClInclude Include="dict0dict.h">
       <Filter>dict</Filter>
     </ClInclude>
+    <ClInclude Include="dict0crea.h">
+      <Filter>dict</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -603,6 +606,9 @@
       <Filter>dict</Filter>
     </ClCompile>
     <ClCompile Include="dict0dict.cc">
+      <Filter>dict</Filter>
+    </ClCompile>
+    <ClCompile Include="dict0crea.cc">
       <Filter>dict</Filter>
     </ClCompile>
   </ItemGroup>

@@ -1436,6 +1436,604 @@ try_find_index:
 	goto loop;
 }
 /************************外键约束处理函数实现结束***************************************/
+void dict_procedure_add_to_cache(dict_proc_t* proc)
+{
+	ulint fold;
+
+	LOCK_DICT();
+
+	fold = ut_fold_string(proc->name);
+	{
+		dict_proc_t*	proc2;
+
+		HASH_SEARCH(name_hash, dict_sys->procedure_hash, fold, proc2,
+			(ut_strcmp(proc2->name, proc->name) == 0));
+		ut_a(proc2 == NULL);
+	}
+
+	HASH_INSERT(dict_proc_t, name_hash, dict_sys->procedure_hash, fold, proc);
+
+	UNLOCK_DICT();
+}
+
+que_t* dict_procedure_reserve_parsed_copy(dict_proc_t*	proc)
+{
+	que_t*		graph;
+	proc_node_t*	proc_node;
+	
+	ut_ad(!mutex_own(&kernel_mutex));
+
+	mutex_enter(&(dict_sys->mutex));
+
+	graph = UT_LIST_GET_FIRST(proc->graphs);
+	if (graph)
+		UT_LIST_REMOVE(graphs, proc->graphs, graph);
+
+	mutex_exit(&(dict_sys->mutex));
+
+	if (graph == NULL) {	
+		graph = pars_sql(proc->sql_string);
+		proc_node = que_fork_get_child(graph);
+		proc_node->dict_proc = proc;
+
+		printf("Parsed a new copy of graph %s\n", proc_node->proc_id->name);
+	}
+
+	return(graph);
+}
+
+void dict_procedure_release_parsed_copy(que_t*	graph)
+{
+	proc_node_t*	proc_node;
+
+	ut_ad(!mutex_own(&kernel_mutex));
+
+	mutex_enter(&(dict_sys->mutex));
+
+	proc_node = que_fork_get_child(graph);
+	UT_LIST_ADD_FIRST(graphs, (proc_node->dict_proc)->graphs, graph);
+
+	mutex_exit(&(dict_sys->mutex));
+}
+
+dict_index_t* dict_index_get_if_in_cache(dulint	index_id)	/* in: index id */
+{
+	dict_table_t*	table;
+	dict_index_t*	index;
+
+	if (dict_sys == NULL)
+		return(NULL);
+
+	mutex_enter(&(dict_sys->mutex));
+
+	table = UT_LIST_GET_FIRST(dict_sys->table_LRU);
+	while (table) {
+		index = UT_LIST_GET_FIRST(table->indexes);
+		while (index) {
+			if (0 == ut_dulint_cmp(index->id, index_id))
+				goto found;
+
+			index = UT_LIST_GET_NEXT(indexes, index);
+		}
+
+		table = UT_LIST_GET_NEXT(table_LRU, table);
+	}
+
+	index = NULL;
+found:
+	mutex_exit(&(dict_sys->mutex));
+
+	return(index);
+}
+////////////////////////////////////////////////////////////////////////////////
+/*创建一个索引树对象*/
+dict_tree_t* dict_tree_create(dict_index_t* index)
+{
+	dict_tree_t* tree;
+
+	tree = mem_alloc(sizeof(dict_tree_t));
+	tree->type = index->type;
+	tree->space = index->space;
+	tree->page = index->page_no;
+	tree->id = index->id;
+
+	UT_LIST_INIT(tree->tree_indexes);
+
+	tree->magic_n = DICT_TREE_MAGIC_N;
+	rw_lock_create(&(tree->lock));
+	rw_lock_set_level(&(tree->lock), SYNC_INDEX_TREE);
+
+	return tree;
+}
+
+/*释放一个索引树对象*/
+void dict_tree_free(dict_tree_t* tree)
+{
+	ut_ad(tree);
+	ut_ad(tree->magic_n == DICT_TREE_MAGIC_N);
+
+	rw_lock_free(&(tree->lock));
+	mem_free(tree);
+}
+
+/*通过rec记录的mix id查找对应的索引对象*/
+UNIV_INLINE dict_index_t* dict_tree_find_index_low(dict_tree_t* tree, rec_t* rec)
+{
+	dict_index_t*	index;
+	dict_table_t*	table;
+	dulint			mix_id;
+	ulint			len;
+
+	index = UT_LIST_GET_FIRST(tree->tree_indexs);
+	ut_ad(index);
+
+	table = index->table;
+	if((index->type & DICT_CLUSTERED) && table->type != DICT_TABLE_ORDINARY){
+		mix_id = mach_dulint_read_compressed(rec_get_nth_field(rec, table->mix_len, &len));
+		while(ut_dulint_cmp(table->mix_id, mix_id) != 0){
+			index = UT_LIST_GET_NEXT(tree_indexes, index);
+			table = index->table;
+
+			ut_ad(index);
+		}
+	}
+
+	return index;
+}
+
+/*通过rec记录的mix id查找对应的索引对象*/
+dict_index_t* dict_tree_find_index(dict_tree_t* tree, rec_t* rec)
+{
+	return dict_tree_find_index_low(tree, rec);
+}
+
+/*通过tuple中的mix id查找对应索引树的索引对象*/
+dict_index_t* dict_tree_find_index_for_tuple(dict_tree_t* tree, dtuple_t* tuple)
+{
+	dict_index_t*	index;
+	dict_table_t*	table;
+	dulint			mix_id;
+
+	ut_ad(dtuple_check_typed(tuple));
+
+	if(UT_LIST_GET_LEN(tree->tree_indexs) == 1)
+		return UT_LIST_GET_FIRST(tree->tree_indexes);
+
+	index = UT_LIST_GET_FIRST(tree->tree_indexs);
+	ut_ad(index);
+
+	table = index->table;
+
+	if(dtuple_get_n_fields(tuple) <= table->mix_len) /*没有mix id列数据*/
+		return NULL;
+
+	mix_id = mach_dulint_read_compressed(dfield_get_data(dtuple_get_nth_field(tuple, table->mix_len)));
+	while(ut_dulint_cmp(table->mix_id, mix_id) != 0){
+		index = UT_LIST_GET_NEXT(tree_indexes, index);
+		table = index->table;
+		ut_ad(index);
+	}
+
+	return index;
+}
+
+/*检查tuple中的列内容是否有索引树上有对应的索引对象*/
+ibool dict_tree_check_search_tuple(dict_tree_t* tree, dtuple_t* tuple)
+{
+	dict_index_t* index;
+
+	index = dict_tree_find_index_for_tuple(tree, tuple);
+	if(index == NULL)
+		return FALSE;
+
+	ut_a(dtuple_get_n_fields_cmp(tuple) <= dict_index_get_n_unique_in_tree(index));
+	return TRUE;
+}
+
+/*通过索引树和对应的记录构建出一个内存中的tuple记录对象（能唯一表示索引的记录）*/
+dtuple_t* dict_tree_build_node_ptr(dict_tree_t* tree, rec_t* rec, ulint page_no, mem_heap_t* heap, ulint level)
+{
+	dtuple_t*		tuple;
+	dict_index_t*	ind;
+	dfield_t*		field;
+	byte*			buf;
+	ulint			n_unique;
+
+	ind = dict_tree_find_index_low(tree, rec);
+
+	/*确定索引唯一值需要的列数*/
+	if(tree->type & DICT_UNIVERSAL){
+		n_unique = rec_get_n_fields(rec);
+		if(level > 0){
+			ut_a(n_unique > 1);
+			n_unique --;
+		}
+	}
+	else
+		n_unique = dict_index_get_n_unique_in_tree(ind);
+
+	tuple = dtuple_create(heap, n_unique + 1);
+	/*设置需要拷贝的列数量和各个列的类型*/
+	dtuple_set_n_fields_cmp(tuple, n_unique);
+	dict_index_copy_types(tuple, ind, n_unique);
+	/*从rec将列内容拷贝到tuple中*/
+	dtype_set(dfield_get_type(field), DATA_SYS_CHILD, 0, 0, 0);
+	rec_copy_prefix_to_dtuple(tuple, rec, n_unique, heap);
+
+	return tuple;
+}
+
+/*从rec拷贝一个索引树tree表示索引的记录内容*/
+rec_t* dict_tree_copy_rec_order_prefix(dict_tree_t* tree, rec_t* rec, byte** buf, ulint* buf_size)
+{
+	dict_index_t*	ind;
+	rec_t*		order_rec;
+	ulint		n_fields;
+
+	ind = dict_tree_find_index_low(tree, rec);
+	n_fields = dict_index_get_n_unique_in_tree(ind);
+	if(tree->type & DICT_UNIVERSAL)
+		n_fields = rec_get_n_fields(rec);
+
+	order_rec = rec_copy_prefix_to_buf(rec, n_fields, buf, buf_size);
+}
+
+/*Builds a typed data tuple out of a physical record. */
+dtuple_t* dict_tree_build_data_tuple(dict_tree_t* tree, rec_t* rec, mem_heap_t* heap)
+{
+	dtuple_t*	tuple;
+	dict_index_t*	ind;
+	ulint		n_fields;
+
+	ind = dict_tree_find_index_low(tree, rec);
+	n_fields = rec_get_n_fields(rec);
+
+	tuple = dtuple_create(heap, n_fields);
+	dict_index_copy_types(tuple, ind, n_fields);
+
+	rec_copy_prefix_to_dtuple(tuple, rec, n_fields, heap);
+	ut_ad(dtuple_check_typed(tuple));
+
+	return tuple;
+}
+
+/*计算一条记录中的内容表示一个索引值最小需要的空间大小*/
+ulint dict_index_calc_min_rec_len(dict_index_t* index)
+{
+	ulint sum = 0;
+	ulint i;
+
+	for(i = 0; i < dict_index_get_n_fields(index); i ++)
+		sum += dtype_get_fixed_size(dict_index_get_nth_type(index, i)); /*计算列数据类型表示占用的空间*/
+
+	/*计算列头数组的长度*/
+	if(sum > 127)
+		sum += 2 * dict_index_get_n_fields(index);
+	else
+		sum += dict_index_get_n_fields(index);
+	/*记录头的固定长度*/
+	sum += REC_N_EXTRA_BYTES;
+
+	return sum;
+}
+
+/*计算一个表中索引数据page数量统计，用于查询优化中*/
+void dict_update_statistics_low(dict_table_t* table, ibool has_dict_mutex)
+{
+	dict_index_t*	index;
+	ulint		size;
+	ulint		sum_of_index_sizes	= 0;
+
+	index = dict_table_get_first_index(table);
+	if(index == NULL)
+		return ;
+
+	while(index){
+		size = btr_get_size(index, BTR_TOTAL_SIZE);
+		index->stat_index_size = size;
+		sum_of_index_sizes += size;
+
+		size = btr_get_size(index, BTR_N_LEAF_PAGES);
+		if(size == 0)
+			size = 1; /*只有一个root page*/
+
+		index->stat_n_leaf_pages = size;
+		/*统计KEY不同的数量,是个预估值*/
+		btr_estimate_number_of_different_key_vals(index);
+
+		index = dict_table_get_next_index(index);
+	}
+
+	index = dict_table_get_first_index(table);
+	/*更新预估的行数*/
+	table->stat_n_rows = index->stat_n_diff_key_vals[dict_index_get_n_unique(index)];
+	/*更新页数*/
+	table->stat_clustered_index_size = index->stat_index_size;
+	/*除聚集索引外，其他索引占用的页数*/
+	table->stat_sum_of_other_index_sizes = sum_of_index_sizes - index->stat_index_size;
+
+	table->stat_initialized = TRUE;
+	table->stat_modified_counter = 0;
+}
+
+void dict_update_statistics(dict_table_t* table)
+{
+	dict_update_statistics_low(table, FALSE);
+}
+
+static void dict_foreign_print_low(dict_foreign_t* foreign)	/* in: foreign key constraint */
+{
+	ulint	i;
+
+	ut_ad(mutex_own(&(dict_sys->mutex)));
+
+	printf("  FOREIGN KEY CONSTRAINT %s: %s (", foreign->id, foreign->foreign_table_name);
+
+	for (i = 0; i < foreign->n_fields; i++)
+		printf(" %s", foreign->foreign_col_names[i]);
+
+	printf(" )\n");
+	printf("             REFERENCES %s (", foreign->referenced_table_name);
+	for (i = 0; i < foreign->n_fields; i++)
+		printf(" %s", foreign->referenced_col_names[i]);
+
+	printf(" )\n");
+}
+
+void dict_table_print(dict_table_t* table)
+{
+	mutex_enter(&(dict_sys->mutex));
+	dict_table_print_low(table);
+	mutex_exit(&(dict_sys->mutex));
+}
+
+void dict_table_print_by_name(char* name)
+{
+	dict_table_t*	table;
+
+	mutex_enter(&(dict_sys->mutex));
+
+	table = dict_table_get_low(name);
+	ut_a(table);
+	dict_table_print_low(table);
+
+	mutex_exit(&(dict_sys->mutex));
+}
+
+
+void dict_table_print_low(dict_table_t*	table)	/* in: table */
+{
+	dict_index_t*	index;
+	dict_foreign_t*	foreign;
+	ulint		i;
+
+	ut_ad(mutex_own(&(dict_sys->mutex)));
+
+	dict_update_statistics_low(table, TRUE);
+
+	printf("--------------------------------------\n");
+	printf(
+		"TABLE: name %s, id %lu %lu, columns %lu, indexes %lu, appr.rows %lu\n", table->name,
+		ut_dulint_get_high(table->id), ut_dulint_get_low(table->id),
+		table->n_cols, UT_LIST_GET_LEN(table->indexes), (ulint)table->stat_n_rows);
+
+	printf("  COLUMNS: ");
+
+	for (i = 0; i < table->n_cols - 1; i++) {
+		dict_col_print_low(dict_table_get_nth_col(table, i));
+		printf("; ");
+	}
+
+	printf("\n");
+
+	index = UT_LIST_GET_FIRST(table->indexes);
+
+	while (index != NULL) {
+		dict_index_print_low(index);
+		index = UT_LIST_GET_NEXT(indexes, index);
+	}
+
+	foreign = UT_LIST_GET_FIRST(table->foreign_list);
+
+	while (foreign != NULL) {
+		dict_foreign_print_low(foreign);
+		foreign = UT_LIST_GET_NEXT(foreign_list, foreign);
+	}
+
+	foreign = UT_LIST_GET_FIRST(table->referenced_list);
+
+	while (foreign != NULL) {
+		dict_foreign_print_low(foreign);
+		foreign = UT_LIST_GET_NEXT(referenced_list, foreign);
+	}
+}
+
+static void dict_col_print_low(dict_col_t* col)
+{
+	dtype_t* type;
+
+	ut_ad(mutex_own(&(dict_sys->mutex)));
+	type = dict_col_get_type(col);
+	printf("%s: ", col->name);
+
+	dtype_print(type);
+}
+
+static void dict_index_print_low(dict_index_t*	index)
+{
+	dict_tree_t*	tree;
+	ib_longlong	n_vals;
+	ulint		i;
+
+	ut_ad(mutex_own(&(dict_sys->mutex)));
+
+	tree = index->tree;
+
+	if (index->n_user_defined_cols > 0)
+		n_vals = index->stat_n_diff_key_vals[index->n_user_defined_cols];
+	else 
+		n_vals = index->stat_n_diff_key_vals[1];
+
+	printf("  INDEX: name %s, table name %s, id %lu %lu, fields %lu/%lu, type %lu\n",
+		index->name, index->table_name,
+		ut_dulint_get_high(tree->id),
+		ut_dulint_get_low(tree->id),
+		index->n_user_defined_cols,
+		index->n_fields, index->type);
+
+	printf("   root page %lu, appr.key vals %lu, leaf pages %lu, size pages %lu\n",
+		tree->page,
+		(ulint)n_vals,
+		index->stat_n_leaf_pages,
+		index->stat_index_size);
+
+	printf("   FIELDS: ");
+
+	for (i = 0; i < index->n_fields; i++)
+		dict_field_print_low(dict_index_get_nth_field(index, i));
+
+	printf("\n");
+}
+
+static void dict_field_print_low(dict_field_t* field)
+{
+	ut_ad(mutex_own(&(dict_sys->mutex)));
+	printf("%s", field->name);
+}
+
+static void dict_print_info_on_foreign_keys_in_create_format(
+	char*		buf,	/* in: auxiliary buffer of 10000 chars */
+	char*		str,	/* in/out: pointer to a string */
+	ulint		len,	/* in: space in str available for info */
+	dict_table_t*	table)	/* in: table */
+{
+
+	dict_foreign_t*	foreign;
+	ulint		i;
+	char*		buf2;
+
+	buf2 = buf;
+
+	mutex_enter(&(dict_sys->mutex));
+
+	foreign = UT_LIST_GET_FIRST(table->foreign_list);
+	if (foreign == NULL) {
+		mutex_exit(&(dict_sys->mutex));
+		return;
+	}
+
+	while (foreign != NULL) {
+		buf2 += sprintf(buf2, ",\n  FOREIGN KEY (");
+
+		for (i = 0; i < foreign->n_fields; i++) {
+			buf2 += sprintf(buf2, "`%s`", foreign->foreign_col_names[i]);
+			
+			if (i + 1 < foreign->n_fields)
+				buf2 += sprintf(buf2, ", ");
+		}
+
+		buf2 += sprintf(buf2, ") REFERENCES `%s` (", foreign->referenced_table_name);
+		/* Change the '/' in the table name to '.' */
+
+		for (i = ut_strlen(buf); i > 0; i--) {
+			if (buf[i] == '/') {
+				buf[i] = '.';
+				break;
+			}
+		}
+	
+		for (i = 0; i < foreign->n_fields; i++) {
+			buf2 += sprintf(buf2, "`%s`", foreign->referenced_col_names[i]);
+			if (i + 1 < foreign->n_fields)
+				buf2 += sprintf(buf2, ", ");
+		}
+
+		buf2 += sprintf(buf2, ")");
+
+		if (foreign->type == DICT_FOREIGN_ON_DELETE_CASCADE)
+			buf2 += sprintf(buf2, " ON DELETE CASCADE");
+	
+		if (foreign->type == DICT_FOREIGN_ON_DELETE_SET_NULL)
+			buf2 += sprintf(buf2, " ON DELETE SET NULL");
+
+		foreign = UT_LIST_GET_NEXT(foreign_list, foreign);
+	}
+
+	mutex_exit(&(dict_sys->mutex));
+
+	buf[len - 1] = '\0';
+	ut_memcpy(str, buf, len);
+}
+
+/**************************************************************************
+Sprintfs to a string info on foreign keys of a table. */
+void dict_print_info_on_foreign_keys(ibool	create_table_format, /* in: if TRUE then print in
+				a format suitable to be inserted into
+				a CREATE TABLE, otherwise in the format
+				of SHOW TABLE STATUS */
+	char*		str,	/* in/out: pointer to a string */
+	ulint		len,	/* in: space in str available for info */
+	dict_table_t*	table)	/* in: table */
+{
+	dict_foreign_t*	foreign;
+	ulint		i;
+	char*		buf2;
+	char		buf[10000];
+
+	if (create_table_format) {
+		dict_print_info_on_foreign_keys_in_create_format(buf, str, len, table);
+		return;
+	}
+
+	buf2 = buf;
+
+	mutex_enter(&(dict_sys->mutex));
+
+	foreign = UT_LIST_GET_FIRST(table->foreign_list);
+
+	if (foreign == NULL) {
+		mutex_exit(&(dict_sys->mutex));
+		return;
+	}
+
+	while (foreign != NULL) {
+		buf2 += sprintf(buf2, "; (");
+
+		for (i = 0; i < foreign->n_fields; i++) {
+			buf2 += sprintf(buf2, "%s", foreign->foreign_col_names[i]);
+			
+			if (i + 1 < foreign->n_fields) {
+				buf2 += sprintf(buf2, " ");
+			}
+		}
+
+		buf2 += sprintf(buf2, ") REFER %s(",foreign->referenced_table_name);
+	
+		for (i = 0; i < foreign->n_fields; i++) {
+			buf2 += sprintf(buf2, "%s", foreign->referenced_col_names[i]);
+
+			if (i + 1 < foreign->n_fields)
+				buf2 += sprintf(buf2, " ");
+		}
+
+		buf2 += sprintf(buf2, ")");
+
+		if (foreign->type == DICT_FOREIGN_ON_DELETE_CASCADE)
+			buf2 += sprintf(buf2, " ON DELETE CASCADE");
+	
+		if (foreign->type == DICT_FOREIGN_ON_DELETE_SET_NULL)
+			buf2 += sprintf(buf2, " ON DELETE SET NULL");
+
+		foreign = UT_LIST_GET_NEXT(foreign_list, foreign);
+	}
+
+	mutex_exit(&(dict_sys->mutex));
+
+	buf[len - 1] = '\0';
+	ut_memcpy(str, buf, len);
+}
+
+
 
 
 
