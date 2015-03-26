@@ -295,15 +295,139 @@ static dtuple_t* dict_create_search_tuple(dtuple_t* tuple, mem_heap_t* heap)
 
 	field1 = dtuple_get_nth_field(tuple, 0);	
 	field2 = dtuple_get_nth_field(search_tuple, 0);	
-
 	dfield_copy(field2, field1);
 
 	field1 = dtuple_get_nth_field(tuple, 1);	
 	field2 = dtuple_get_nth_field(search_tuple, 1);	
-
 	dfield_copy(field2, field1);
 
 	ut_ad(dtuple_validate(search_tuple));
 
 	return search_tuple;
 }
+
+/*通过node中的信息构建一个SYS INDEX表中的索引对象记录,并插入SYS INDEX中*/
+static ulint dict_build_index_def_step(que_thr_t* thr, ind_node_t* node)
+{
+	dict_table_t*	table;
+	dict_index_t*	index;
+	dtuple_t*	row;
+
+	UT_NOT_USED(thr);
+	ut_ad(mutex_own(&(dict_sys->mutex)));
+
+	index = node->index;
+	table = dict_table_get_low(index->table_name);
+	if(table == NULL)
+		return DB_TABLE_NOT_FOUND;
+	/*设置table id*/
+	thr_get_trx(thr)->table->id = table->id;
+
+	node->table = table;
+	ut_ad((UT_LIST_GET_LEN(table->indexes) > 0) || (index->type & DICT_CLUSTERED));
+	/*为新索引分配一个索引的ID*/
+	index->id = dict_hdr_get_new_id(DICT_HDR_INDEX_ID);
+	if(index->type & DICT_CLUSTERED)
+		index->space = table->space;
+
+	index->page_no = FIL_NULL;
+	/*构建一个index记录tuple*/
+	row = dict_create_sys_indexes_tuple(index, node->heap, thr_get_trx(thr));
+	node->ind_row = row;
+
+	ins_node_set_new_row(node->ind_def, row);
+
+	return DB_SUCCESS;
+}
+
+/*构建一个field格式为SYS_FIELD表的内存行记录tuple对象，并将row插入到SYS_FIELD中*/
+static ulint dict_build_field_def_step(ind_node_t* node)
+{
+	dict_index_t*	index;
+	dtuple_t*	row;
+
+	index = node->index;
+	row = dict_create_sys_fields_tuple(index, node->field_no, node->heap);
+	ins_node_set_new_row(node->field_def, row);
+
+	return DB_SUCCESS;
+}
+
+/*构建不是cluster member的索引对象的索引树*/
+static ulint dict_create_index_tree_step(que_thr_t* thr, ind_node_t* node)
+{
+	dict_index_t*	index;
+	dict_table_t*	sys_indexes;
+	dict_table_t*	table;
+	dtuple_t*	search_tuple;
+	btr_pcur_t	pcur;
+	mtr_t		mtr;
+
+	ut_ad(mutex_own(&(dict_sys->mutex)));
+	UT_NOT_USED(thr);
+
+	index = node->index;	
+	table = node->table;
+
+	sys_indexes = dict_sys->sys_indexes;
+	if(index->type & DICT_CLUSTERED && table->type == DICT_TABLE_CLUSTER_MEMBER)
+		return DB_SUCCESS;
+	
+	/*启动一个mini transaction*/
+	mtr_start(&mtr);
+
+	search_tuple = dict_create_search_tuple(node->ind_row, node->heap);
+	/*打开SYS INDEX表聚集索引树并定位到search_tuple的BTREE位置*/
+	btr_pcur_open(UT_LIST_GET_FIRST(sys_indexes->indexes), search_tuple, PAGE_CUR_L, BTR_MODIFY_LEAF, &pcur, &mtr);
+	btr_pcur_move_to_next_user_rec(&pcur, &mtr);
+
+	/*在index->space的表空间上为新建的索引添加个btree*/
+	index->page_no = btr_create(index->type, index->space, index->id, &mtr);
+	/*将新创建的page no写入到sys index表中*/
+	page_rec_write_index_page_no(btr_pcur_get_rec(&pcur), DICT_SYS_INDEXES_PAGE_NO_FIELD, index->page_no, &mtr);
+	btr_pcur_close(&pcur);
+
+	if(index->page_no == FIL_NULL)
+		return DB_OUT_OF_FILE_SPACE;
+
+	return DB_SUCCESS;
+}
+
+/*删除一个索引树对象*/
+void dict_drop_index_tree(rec_t* rec, mtr_t* mtr)
+{
+	ulint	root_page_no;
+	ulint	space;
+	byte*	ptr;
+	ulint	len;
+
+	ut_ad(mutex_own(&(dict_sys->mutex)));
+	/*获得SYS INDEX表中对应的root page no*/
+	ptr = rec_get_nth_field(rec, DICT_SYS_INDEXES_PAGE_NO_FIELD, &len);
+	ut_ad(len == 4);
+	root_page_no = mtr_read_ulint(ptr, MLOG_4BYTES, mtr);
+	if(root_page_no == FIL_NULL)
+		return ;
+
+	/*获得space id*/
+	ptr = rec_get_nth_field(rec, DICT_SYS_INDEXES_SPACE_NO_FIELD, &len);
+	space = mtr_read_ulint(ptr, MLOG_4BYTES, mtr);
+	/*释放整个btree的page,root page不做释放*/
+	btr_free_but_not_root(space, root_page_no);
+	/*对root page的释放*/
+	btr_free_root(space, root_page_no, mtr);
+
+	/*更新SYS INDEX对应记录的root page no*/
+	page_rec_write_index_page_no(rec, DICT_SYS_INDEXES_PAGE_NO_FIELD, FIL_NULL, mtr);
+}
+
+
+
+
+
+
+
+
+
+
+
