@@ -422,7 +422,7 @@ void ibuf_set_free_bits(ulint type, page_t* page, ulint val, ulint max_val)
 	page_t* bitmap_page;
 
 	/*聚集索引，不能设置ibuf bitmap*/
-	if(type & DICT_CLUSTERD)
+	if(type & DICT_CLUSTERED)
 		return;
 
 	if(btr_page_get_level_low(page) != 0)

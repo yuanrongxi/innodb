@@ -126,6 +126,7 @@
     <ClInclude Include="dict0boot.h" />
     <ClInclude Include="dict0crea.h" />
     <ClInclude Include="dict0dict.h" />
+    <ClInclude Include="dict0load.h" />
     <ClInclude Include="dict0mem.h" />
     <ClInclude Include="dict0types.h" />
     <ClInclude Include="dyn0dyn.h" />
@@ -203,6 +204,7 @@
     <ClCompile Include="dict0boot.cc" />
     <ClCompile Include="dict0crea.cc" />
     <ClCompile Include="dict0dict.cc" />
+    <ClCompile Include="dict0load.cc" />
     <ClCompile Include="dict0mem.cc" />
     <ClCompile Include="dyn0dyn.cc" />
     <ClCompile Include="fil0fil.cc" />
