@@ -268,7 +268,7 @@ ibuf_data_t* ibuf_data_init_for_space(ulint space)
 	dict_mem_index_add_field(index, "TYPES", 0);
 
 	index->page_no = FSP_IBUF_TREE_ROOT_PAGE_NO;
-	index->id = ut_dulint_add(DICT_IBUF_ID_MIN, space);
+	index->id = ut_dulint_add(DICT_IBUF_ID_MIN, space); /*ibuf的索引ID从DICT_IBUF_ID_MIN开始分配，为了避免和常规的索引ID重复*/
 
 	dict_index_add_to_cache(table, index);
 

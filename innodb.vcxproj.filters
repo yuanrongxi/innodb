@@ -423,6 +423,9 @@
     <ClInclude Include="dict0load.h">
       <Filter>dict</Filter>
     </ClInclude>
+    <ClInclude Include="srv0start.h">
+      <Filter>srv</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -616,6 +619,9 @@
     </ClCompile>
     <ClCompile Include="dict0load.cc">
       <Filter>dict</Filter>
+    </ClCompile>
+    <ClCompile Include="srv0start.cc">
+      <Filter>srv</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

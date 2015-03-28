@@ -67,7 +67,7 @@ extern btr_search_sys_t*		btr_search_sys;
 
 /*互斥latch*/
 extern rw_lock_t*				btr_search_latch_temp;
-
+#define btr_search_latch		(*btr_search_latch_temp)
 /*统计信息*/
 extern ulint					btr_search_n_succ;
 extern ulint					btr_search_n_hash_fail;
