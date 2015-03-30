@@ -695,7 +695,7 @@ static ulint recv_read_in_area(ulint space, ulint page_no)
 			mutex_exit(&(recv_sys->mutex));
 		}
 	}
-
+	/*异步对页进行读取，并在buf_page_io_complete中做redo log恢复*/
 	buf_read_recv_pages(FALSE, space, page_nos, n);
 
 	return(n);
@@ -806,7 +806,7 @@ loop:
 
 	recv_sys->apply_log_recs = FALSE;
 	recv_sys->apply_batch_on = FALSE;
-			
+	/*对已经恢复的日志fil_addr记录做清空*/		
 	recv_sys_empty_hash();
 
 	if (has_printed)
@@ -1403,7 +1403,7 @@ ibool recv_scan_log_recs(ibool apply_automatically, ulint available_memory, iboo
 	}
 
 	if(more_data && !recv_sys->found_corrupt_log){
-		/*尝试解析log,将数据放入recv_addr当中*/
+		/*尝试解析log,将数据放入recv_addr当中,为recv_apply_hashed_log_recs做准备*/
 		recv_parse_log_recs(store_to_hash);
 		if(store_to_hash && mem_heap_get_size(recv_sys->heap) > available_memory && apply_automatically){ /*批量将recv_addr中的数据应用到页上*/
 			recv_apply_hashed_log_recs(FALSE);
@@ -1634,7 +1634,7 @@ ulint recv_recovery_from_checkpoint_start(ulint type, dulint limit_lsn, dulint m
 /*完成从checkpoint出开始日志恢复page的过程*/
 void recv_recovery_from_checkpoint_finish()
 {
-	if(srv_force_recovery < SRV_FORCE_NO_TRX_UNDO)
+	if(srv_force_recovery < SRV_FORCE_NO_TRX_UNDO) /*回滚未完成的事务*/
 		trx_rollback_or_clean_all_without_sess();
 
 	/*将recv_addr的hash表中的数据恢复到page中*/
@@ -1644,7 +1644,7 @@ void recv_recovery_from_checkpoint_finish()
 	if(log_debug_writes)
 		fprintf(stderr, "InnoDB: Log records applied to the database\n");
 
-	/*进行了redo log恢复数据*/
+	/*进行了redo log恢复数据,同步binlog*/
 	if(recv_needed_recovery){
 		trx_sys_print_mysql_master_log_pos();
 		trx_sys_print_mysql_binlog_offset();

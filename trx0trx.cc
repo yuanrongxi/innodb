@@ -272,7 +272,7 @@ void trx_lists_init_at_db_start()
 		/*将insert undo list中的事务进行初始化*/
 		undo = UT_LIST_GET_FIRST(rseg->insert_undo_list);
 		while(undo != NULL){
-			trx = trx_create(NULL);
+			trx = trx_create(NULL); /*设置为NULLsession,以便进行回滚*/
 			trx->id = undo->trx_id;
 			trx->insert_undo = undo;
 			trx->rseg = rseg;

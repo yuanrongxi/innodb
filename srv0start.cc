@@ -504,7 +504,7 @@ static ulint open_or_create_data_files(ibool* create_new_db, dulint* min_flushed
 				ret = os_file_get_size(files[i], &size, &size_high);
 				ut_a(ret);
 				/*校验数据库文件的长度*/
-				rounded_size_pages = (size / (1024 * 1024) + 4096 * size_high) << (20 - UNIV_PAGE_SIZE_SHIFT); /*计算文件有多大，以MB为单位计算*/
+				rounded_size_pages = (size / (1024 * 1024) + 4096 * size_high) << (20 - UNIV_PAGE_SIZE_SHIFT); /*计算文件有多大，以page为单位计算*/
 				if (i == srv_n_data_files - 1 && srv_auto_extend_last_data_file) {
 					if (srv_data_file_sizes[i] > rounded_size_pages || (srv_last_file_size_max > 0 && srv_last_file_size_max < rounded_size_pages)) {
 						fprintf(stderr,
@@ -520,7 +520,7 @@ static ulint open_or_create_data_files(ibool* create_new_db, dulint* min_flushed
 					return(DB_ERROR);
 				}
 			}
-			/*从文件读取各种lsn和number*/
+			/*从文件读取各种lsn和number,主要是check point位置*/
 			fil_read_flushed_lsn_and_arch_log_no(files[i], one_opened, min_flushed_lsn, min_arch_log_no, max_flushed_lsn, max_arch_log_no);
 			one_opened = TRUE;
 		}
@@ -796,8 +796,9 @@ int innobase_start_or_create_for_mysql()
 
 		/* Since ibuf init is in dict_boot, and ibuf is needed in any disk i/o, first call dict_boot */
 		dict_boot();
+		/*初始化上一次数据库关闭前正在执行的事务对象*/
 		trx_sys_init_at_db_start();
-		/*不需要对上次数据库关闭之前正在处理的事务回滚*/
+		/*上一次关闭前的事务未进行初始化之前，不能进行页预读*/
 		srv_startup_is_before_trx_rollback_phase = FALSE;
 
 		/* Initialize the fsp free limit global variable in the log system */
@@ -811,7 +812,10 @@ int innobase_start_or_create_for_mysql()
 
 		dict_boot();
 		trx_sys_init_at_db_start();
+		/*上一次关闭前的事务未进行初始化之前，不能进行页预读*/
+		srv_startup_is_before_trx_rollback_phase = FALSE;
 		fsp_header_get_free_limit(0);
+		/*完成日志推演，并回滚掉所有上次服务关闭之前未完成的事务*/
 		recv_recovery_from_checkpoint_finish();
 	}
 
@@ -860,6 +864,7 @@ int innobase_start_or_create_for_mysql()
 	if (srv_use_doublewrite_buf && trx_doublewrite == NULL) /*如果doublewrite没有被建立，建立一个doublewrite缓冲区*/
 		trx_sys_create_doublewrite_buf();
 
+	/*创建外键约束*/
 	err = dict_create_or_check_foreign_constraint_tables();
 	if (err != DB_SUCCESS)
 		return((int)DB_ERROR);
@@ -888,6 +893,7 @@ int innobase_start_or_create_for_mysql()
 				tablespace_size_in_header, sum_of_data_file_sizes);
 	}
 
+	/*测试os pthread mutex*/
 	os_fast_mutex_init(&srv_os_test_mutex);
 
 	if (0 != os_fast_mutex_trylock(&srv_os_test_mutex)) {
