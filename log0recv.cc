@@ -643,8 +643,9 @@ void recv_recover_page(ibool recover_backup, ibool just_read_in, page_t* page, u
 			if (log_debug_writes)
 				fprintf(stderr, "InnoDB: Applying log rec type %lu len %lu to space %lu page no %lu\n",
 					(ulint)recv->type, recv->len, recv_addr->space, recv_addr->page_no);
-
+			/*进行mini transcation推演*/
 			recv_parse_or_apply_log_rec_body(recv->type, buf, buf + recv->len, page, &mtr);
+			/*修改page LSN*/
 			mach_write_to_8(page + UNIV_PAGE_SIZE - FIL_PAGE_END_LSN, ut_dulint_add(recv->start_lsn, recv->len));
 			mach_write_to_8(page + FIL_PAGE_LSN, ut_dulint_add(recv->start_lsn, recv->len));
 		}
@@ -658,6 +659,7 @@ void recv_recover_page(ibool recover_backup, ibool just_read_in, page_t* page, u
 	mutex_enter(SYS_MUTEX);
 	recv_addr->state = RECV_PROCESSED;
 
+	/*对hash cell的计数器进行-1,以便recv_apply_hashed_log_recs函数结束等待*/
 	ut_a(recv_sys->n_addrs);
 	recv_sys->n_addrs --;
 	mutex_exit(SYS_MUTEX);
