@@ -978,7 +978,7 @@ static srv_slot_t* srv_table_reserve_slot_for_mysql()
 	return  slot;
 }
 
-/*将一个mysql thread挂起，知道对应事务锁的释放，应该是用于事务锁等待*/
+/*将一个mysql thread挂起,直到对应事务锁的释放，应该是用于事务锁等待*/
 ibool srv_suspend_mysql_thread(que_thr_t* thr)
 {
 	srv_slot_t*	slot;
@@ -1049,3 +1049,303 @@ void srv_release_mysql_thread_if_suspended(que_thr_t* thr)
 		}
 	}
 }
+
+/*刷新IO次数和insert update delete read的记录操作次数*/
+static void srv_refresh_innodb_monitor_stats()
+{
+	mutex_enter(&srv_innodb_monitor_mutex);
+
+	srv_last_monitor_time = time(NULL);
+	/*统计aio的IO都系次数*/
+	os_aio_refresh_stats();
+
+	btr_cur_n_sea_old = btr_cur_n_sea;
+	btr_cur_n_non_sea_old = btr_cur_n_non_sea;
+	/*redo log的IO次数*/
+	log_refresh_stats();
+	/*buf pool page产生的IO次数*/
+	buf_refresh_io_stats();
+
+	srv_n_rows_inserted_old = srv_n_rows_inserted;
+	srv_n_rows_updated_old = srv_n_rows_updated;
+	srv_n_rows_deleted_old = srv_n_rows_deleted;
+	srv_n_rows_read_old = srv_n_rows_read;
+
+	mutex_exit(&srv_innodb_monitor_mutex);
+}
+
+/*打印InnoDB Monitor的信息统计,输出到buf中,innodb status命令*/
+void srv_sprintf_innodb_monitor(char* buf, ulint len)
+{
+	char*	buf_end	= buf + len - 2000;
+	double	time_elapsed;
+	time_t	current_time;
+
+	mutex_enter(&srv_innodb_monitor_mutex);
+
+	current_time = time(NULL);
+	time_elapsed = difftime(current_time, srv_last_monitor_time) + 0.001;
+
+	srv_last_monitor_time = time(NULL);
+	ut_a(len >= 4096);
+	buf += sprintf(buf, "\n=====================================\n");
+
+	ut_sprintf_timestamp(buf);
+	buf = buf + strlen(buf);
+	ut_a(buf < buf_end + 1500);
+
+	buf += sprintf(buf, " INNODB MONITOR OUTPUT\n=====================================\n");
+	buf += sprintf(buf, "Per second averages calculated from the last %lu seconds\n", (ulint)time_elapsed);
+	/*latch sync信息输出*/
+	buf += sprintf(buf, "----------\n"
+		"SEMAPHORES\n"
+		"----------\n");
+	sync_print(buf, buf_end);
+
+	buf = buf + strlen(buf);
+	ut_a(buf < buf_end + 1500);
+	/*lock info输出*/
+	buf += sprintf(buf, "------------\n"
+		"TRANSACTIONS\n"
+		"------------\n");
+	lock_print_info(buf, buf_end);
+	buf = buf + strlen(buf);
+	/*aio info输出*/
+	buf += sprintf(buf, "--------\n"
+		"FILE I/O\n"
+		"--------\n");
+	os_aio_print(buf, buf_end);
+	buf = buf + strlen(buf);
+	ut_a(buf < buf_end + 1500);
+	/*insert buffer信息输出*/
+	buf += sprintf(buf, "-------------------------------------\n"
+		"INSERT BUFFER AND ADAPTIVE HASH INDEX\n"
+		"-------------------------------------\n");
+	ibuf_print(buf, buf_end);
+	buf = buf + strlen(buf);
+	ut_a(buf < buf_end + 1500);
+	/*自适应hash信息输出*/
+	ha_print_info(buf, buf_end, btr_search_sys->hash_index);
+	buf = buf + strlen(buf);
+	ut_a(buf < buf_end + 1500);
+
+	buf += sprintf(buf,
+		"%.2f hash searches/s, %.2f non-hash searches/s\n",
+		(btr_cur_n_sea - btr_cur_n_sea_old)/ time_elapsed,
+		(btr_cur_n_non_sea - btr_cur_n_non_sea_old)/ time_elapsed);
+	btr_cur_n_sea_old = btr_cur_n_sea;
+	btr_cur_n_non_sea_old = btr_cur_n_non_sea;
+	/*redo log信息输出*/
+	buf += sprintf(buf,"---\n"
+		"LOG\n"
+		"---\n");
+	log_print(buf, buf_end);
+	buf = buf + strlen(buf);
+	ut_a(buf < buf_end + 1500);
+	/*缓冲池信息输出*/
+	buf += sprintf(buf, "----------------------\n"
+		"BUFFER POOL AND MEMORY\n"
+		"----------------------\n");
+	buf += sprintf(buf,
+		"Total memory allocated %lu; in additional pool allocated %lu\n",
+		ut_total_allocated_memory,
+		mem_pool_get_reserved(mem_comm_pool));
+	buf_print_io(buf, buf_end);
+	buf = buf + strlen(buf);
+	ut_a(buf < buf_end + 1500);
+	/*记录操作信息输出*/
+	buf += sprintf(buf, "--------------\n"
+		"ROW OPERATIONS\n"
+		"--------------\n");
+	buf += sprintf(buf,
+		"%ld queries inside InnoDB, %ld queries in queue; main thread: %s\n",
+		srv_conc_n_threads, srv_conc_n_waiting_threads,
+		srv_main_thread_op_info);
+	buf += sprintf(buf,
+		"Number of rows inserted %lu, updated %lu, deleted %lu, read %lu\n",
+		srv_n_rows_inserted, 
+		srv_n_rows_updated, 
+		srv_n_rows_deleted, 
+		srv_n_rows_read);
+	buf += sprintf(buf,
+		"%.2f inserts/s, %.2f updates/s, %.2f deletes/s, %.2f reads/s\n",
+		(srv_n_rows_inserted - srv_n_rows_inserted_old)
+		/ time_elapsed,
+		(srv_n_rows_updated - srv_n_rows_updated_old)
+		/ time_elapsed,
+		(srv_n_rows_deleted - srv_n_rows_deleted_old)
+		/ time_elapsed,
+		(srv_n_rows_read - srv_n_rows_read_old)
+		/ time_elapsed);
+
+	srv_n_rows_inserted_old = srv_n_rows_inserted;
+	srv_n_rows_updated_old = srv_n_rows_updated;
+	srv_n_rows_deleted_old = srv_n_rows_deleted;
+	srv_n_rows_read_old = srv_n_rows_read;
+
+	buf += sprintf(buf, "----------------------------\n"
+		"END OF INNODB MONITOR OUTPUT\n"
+		"============================\n");
+	ut_a(buf < buf_end + 1900);
+
+	mutex_exit(&srv_innodb_monitor_mutex);
+}
+
+/*事务锁等待超时检测的线程主体*/
+void* srv_lock_timeout_and_monitor_thread(void* arg)
+{
+	srv_slot_t*	slot;
+	double		time_elapsed;
+	time_t          current_time;
+	time_t		last_table_monitor_time;
+	time_t		last_monitor_time;
+	ibool		some_waits;
+	double		wait_time;
+	char*		buf;
+	ulint		i;
+
+	UT_NOT_USED(arg);
+	srv_last_monitor_time = time(NULL);
+	last_table_monitor_time = time(NULL);
+	last_monitor_time = time(NULL);
+
+loop:
+	srv_lock_timeout_and_monitor_active = TRUE;
+	/*一秒一次？*/
+	os_thread_sleep(1000000);
+	/* In case mutex_exit is not a memory barrier, it is
+	theoretically possible some threads are left waiting though
+	the semaphore is already released. Wake up those threads: */
+	sync_arr_wake_threads_if_sema_free();
+
+	current_time = time(NULL);
+	time_elapsed = difftime(current_time, last_monitor_time);	
+	if(time_elapsed > 15){
+		last_monitor_time = time(NULL);
+		if(srv_print_innodb_monitor){
+			buf = mem_alloc(100000);
+			srv_sprintf_innodb_monitor(buf, 90000);
+			ut_a(strlen(buf) < 99000);
+			printf("%s", buf);
+			mem_free(buf);
+		}
+
+		if(srv_print_innodb_tablespace_monitor && difftime(current_time, last_table_monitor_time) > 60){
+			last_table_monitor_time = time(NULL);	
+
+			printf("================================================\n");
+			ut_print_timestamp(stdout);
+			printf(" INNODB TABLESPACE MONITOR OUTPUT\n"
+				"================================================\n");
+
+			fsp_print(0);
+			fprintf(stderr, "Validating tablespace\n");
+			fsp_validate(0);
+			fprintf(stderr, "Validation ok\n");
+			printf("---------------------------------------\n"
+				"END OF INNODB TABLESPACE MONITOR OUTPUT\n"
+				"=======================================\n");
+		}
+
+		if (srv_print_innodb_table_monitor && difftime(current_time, last_table_monitor_time) > 60) {
+			last_table_monitor_time = time(NULL);	
+
+			printf("===========================================\n");
+
+			ut_print_timestamp(stdout);
+
+			printf(" INNODB TABLE MONITOR OUTPUT\n"
+				"===========================================\n");
+			dict_print();
+			printf("-----------------------------------\n"
+				"END OF INNODB TABLE MONITOR OUTPUT\n"
+				"==================================\n");
+		}
+	}
+
+	mutex_enter(&kernel_mutex);
+	some_waits = FALSE;
+	/* Check of all slots if a thread is waiting there, and if it has exceeded the time limit,检查所有处于waiting状态的线程，是否等待太久了*/
+	for(i = 0; i < OS_THREAD_MAX_N; i++){
+		slot = srv_mysql_table + i;
+		wait_time = ut_difftime(ut_time(), slot->suspend_time); /*计算线程挂起的时间*/
+		if(srv_lock_wait_timeout < 100000000 && (wait_time > (double) srv_lock_wait_timeout || wait_time < 0)){ /*wait time > 100000000秒,等待太久了*/
+			if (thr_get_trx(slot->thr)->wait_lock) /*是因为事务锁等待，直接将事务取消等待这个锁的release*/
+				lock_cancel_waiting_and_release(thr_get_trx(slot->thr)->wait_lock);
+		}
+	}
+
+	os_event_reset(srv_lock_timeout_thread_event);
+	mutex_exit(kernel_mutex);
+
+	if (srv_shutdown_state >= SRV_SHUTDOWN_CLEANUP)
+		goto exit_func;
+
+	if (some_waits || srv_print_innodb_monitor || srv_print_innodb_lock_monitor
+		|| srv_print_innodb_tablespace_monitor || srv_print_innodb_table_monitor){
+			goto loop;
+	}
+
+	srv_lock_timeout_and_monitor_active = FALSE;
+	os_event_wait(srv_lock_timeout_thread_event);
+	goto loop;
+
+exit_func:
+	srv_lock_timeout_and_monitor_active = FALSE;
+	return 0;
+}
+
+/*错误监测线程主体函数*/
+void* srv_error_monitor_thread(void* arg)
+{
+	ulint	cnt	= 0;
+
+	UT_NOT_USED(arg);
+loop:
+	srv_error_monitor_active = TRUE;
+
+	cnt++;
+	/*每2秒检查一次？*/
+	os_thread_sleep(2000000);
+
+	if(difftime(time(NULL), srv_last_monitor_time) > 60){ /*每60秒做一次monitor stats统计*/
+		srv_refresh_innodb_monitor_stats();
+	}
+	/*进行很长时间latch等待的信息打印*/
+	sync_array_print_long_waits();
+
+	fflush(stderr);
+	fflush(stdout);
+
+	if(srv_shutdown_state < SRV_SHUTDOWN_LAST_PHASE)
+		goto loop;
+
+	srv_error_monitor_active = FALSE;
+
+	return NULL;
+}
+
+/*激活（master）主体线程*/
+void srv_active_wake_master_thread()
+{
+	srv_activity_count ++;
+
+	if (srv_n_threads_active[SRV_MASTER] == 0){ /*master已经在运行*/
+		mutex_enter(&kernel_mutex);
+		srv_release_threads(SRV_MASTER, 1);
+		mutex_exit(&kernel_mutex);
+	}
+}
+
+/*master thread被挂起后，其他操作需要唤醒master thread*/
+void srv_wake_master_thread()
+{
+	srv_activity_count++;
+
+	mutex_enter(&kernel_mutex);
+	srv_release_threads(SRV_MASTER, 1);
+	mutex_exit(&kernel_mutex);
+}
+
+
+
