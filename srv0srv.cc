@@ -1270,7 +1270,7 @@ loop:
 		slot = srv_mysql_table + i;
 		wait_time = ut_difftime(ut_time(), slot->suspend_time); /*计算线程挂起的时间*/
 		if(srv_lock_wait_timeout < 100000000 && (wait_time > (double) srv_lock_wait_timeout || wait_time < 0)){ /*wait time > 100000000秒,等待太久了*/
-			if (thr_get_trx(slot->thr)->wait_lock) /*是因为事务锁等待，直接将事务取消等待这个锁的release*/
+			if (thr_get_trx(slot->thr)->wait_lock) /*是因为事务锁等待，直接将事务取消等待这个锁的release,防止事务僵死*/
 				lock_cancel_waiting_and_release(thr_get_trx(slot->thr)->wait_lock);
 		}
 	}
@@ -1347,5 +1347,240 @@ void srv_wake_master_thread()
 	mutex_exit(&kernel_mutex);
 }
 
+/*master thread线程主体函数*/
+void* srv_master_thread(void* arg)
+{
+	os_event_t	event;
+	time_t      last_flush_time;
+	time_t      current_time;
+	ulint		old_activity_count;
+	ulint		n_pages_purged;
+	ulint		n_bytes_merged;
+	ulint		n_pages_flushed;
+	ulint		n_bytes_archived;
+	ulint		n_tables_to_drop;
+	ulint		n_ios;
+	ulint		n_ios_old;
+	ulint		n_ios_very_old;
+	ulint		n_pend_ios;
+	ulint		i;
 
+	UT_NOT_USED(arg);
+
+	/*为master thread分配一个thread slot槽位*/
+	srv_table_reserve_slot(SRV_MASTER);
+
+	mutex_enter(&kernel_mutex);
+	srv_n_threads_active[SRV_MASTER] ++;
+	mutex_exit(&kernel_mutex);
+
+	/*激活所有innodb本身创建的线程*/
+	os_event_set(srv_sys->operational);
+
+loop:
+	srv_main_thread_op_info = "reserving kernel mutex";
+	n_ios_very_old = log_sys->n_log_ios + buf_pool->n_pages_read + buf_pool->n_pages_written; /*磁盘IO总数*/
+
+	mutex_enter(&kernel_mutex);
+	old_activity_count = srv_activity_count; /*本次循环前唤醒线程的次数*/
+	mutex_exit(&kernel_mutex);
+
+	for(i = 0; i < 10; i++){
+		n_ios_old = log_sys->n_log_ios + buf_pool->n_pages_read + buf_pool->n_pages_written;
+		srv_main_thread_op_info = (char*)"sleeping"; /*sleep 1秒*/
+		os_thread_sleep(1000000);
+
+		/*删除表操作的执行*/
+		srv_main_thread_op_info = (char*)"doing background drop tables";
+		row_drop_tables_for_mysql_in_background();
+
+		srv_main_thread_op_info = (char*)"";
+		if(srv_force_recovery >= SRV_FORCE_NO_BACKGROUND) /*innodb正在做redo log推演*/
+			goto suspend_thread;
+
+		/*redo log落盘*/
+		srv_main_thread_op_info = (char*)"flushing log";
+		log_flush_up_to(ut_dulint_max, LOG_WAIT_ONE_GROUP);
+		log_flush_to_disk();
+
+		n_pend_ios = buf_get_n_pending_ios() + log_sys->n_pending_writes;
+		n_ios = log_sys->n_log_ios + buf_pool->n_pages_read + buf_pool->n_pages_written;
+		if(n_pend_ios < 3 && n_ios - n_ios_old < 10){ /*日志落盘后与循环开始sleep前1秒钟之间IO较少*/
+			srv_main_thread_op_info = (char*)"doing insert buffer merge";
+			ibuf_contract_for_n_pages(TRUE, 5); /*进行insert buffer数据归并,归并5个页的数据到索引树上*/
+
+			/*再次将ibuffer 归并的日志落盘*/
+			srv_main_thread_op_info = (char*)"flushing log";
+			log_flush_up_to(ut_dulint_max, LOG_WAIT_ONE_GROUP);
+			log_flush_to_disk();
+		}
+
+		if(srv_fast_shutdown && srv_shutdown_state > 0)
+			goto background_loop;
+
+		/*在循环期间没有新的线程唤醒*/
+		if(srv_activity_count == old_activity_count){
+			if (srv_print_thread_releases)
+				printf("Master thread wakes up!\n");
+
+			goto background_loop;
+		}
+	}
+
+	if (srv_print_thread_releases)
+		printf("Master thread wakes up!\n");
+
+	n_pend_ios = buf_get_n_pending_ios() + log_sys->n_pending_writes;
+	n_ios = log_sys->n_log_ios + buf_pool->n_pages_read + buf_pool->n_pages_written;
+	if(n_pend_ios < 3 && n_ios - n_ios_very_old < 200){ /*正在执行的IO操作<3和本次loop完成的IO < 200, 进行buffer pool批量将page刷入磁盘*/
+		srv_main_thread_op_info = "flushing buffer pool pages";
+		buf_flush_batch(BUF_FLUSH_LIST, 50, ut_dulint_max);
+
+		srv_main_thread_op_info = "flushing log";
+		log_flush_up_to(ut_dulint_max, LOG_WAIT_ONE_GROUP);
+		log_flush_to_disk();
+	}
+
+	/*周期性10秒将ibuffer归并到索引树*/
+	srv_main_thread_op_info = (char*)"doing insert buffer merge";
+	ibuf_contract_for_n_pages(TRUE, 5);
+
+	srv_main_thread_op_info = (char*)"flushing log";
+	log_flush_up_to(ut_dulint_max, LOG_WAIT_ONE_GROUP);
+	log_flush_to_disk();
+
+	/*进行提交后的事务清理，trx purge*/
+	n_pages_purged = 1;
+	last_flush_time = time(NULL);
+	while(n_pages_purged){
+		if(srv_fast_shutdown && srv_shutdown_state > 0)
+			goto background_loop;
+
+		srv_main_thread_op_info = (char*)"purging";
+		n_pages_purged = trx_purge();
+
+		current_time = time(NULL);
+		if(difftime(current_time, last_flush_time) > 1){ /*trx purge超过1秒，进行redo log刷盘*/
+			srv_main_thread_op_info = "flushing log";
+			log_flush_up_to(ut_dulint_max, LOG_WAIT_ONE_GROUP);
+			log_flush_to_disk();
+			last_flush_time = current_time;
+		}
+	}
+
+background_loop:
+	srv_main_thread_op_info = (char*)"doing background drop tables";
+	n_tables_to_drop = row_drop_tables_for_mysql_in_background();
+	if(n_tables_to_drop > 0){
+		/* Do not monopolize the CPU even if there are tables waiting
+		in the background drop queue. (It is essentially a bug if
+		MySQL tries to drop a table while there are still open handles
+		to it and we had to put it to the background drop queue.) */
+		os_thread_sleep(100000);
+	}
+
+	srv_main_thread_op_info = (char*)"";
+	/*批量将buffer pool的页刷入磁盘*/
+	srv_main_thread_op_info = (char*)"flushing buffer pool pages";
+	n_pages_flushed = buf_flush_batch(BUF_FLUSH_LIST, 10, ut_dulint_max);
+
+	/*每10秒建立一个checkpoint*/
+	srv_main_thread_op_info = (char*)"making checkpoint";
+	log_checkpoint(TRUE, FALSE);
+
+	srv_main_thread_op_info = (char*)"reserving kernel mutex";
+	mutex_enter(&kernel_mutex);
+	if (srv_activity_count != old_activity_count) { /*后台有新的线程被激活*/
+		mutex_exit(&kernel_mutex);
+		goto loop;
+	}
+	old_activity_count = srv_activity_count;
+	mutex_exit(&kernel_mutex);
+
+	/* The server has been quiet for a while: start running background operations,innodb没有启动新线程进行处理，开启background操作模式*/
+	/*trx purge*/
+	srv_main_thread_op_info = (char*)"purging";
+	if (srv_fast_shutdown && srv_shutdown_state > 0)
+		n_pages_purged = 0;
+	else
+		n_pages_purged = trx_purge();
+	srv_main_thread_op_info = (char*)"reserving kernel mutex";
+	mutex_enter(&kernel_mutex);
+	if (srv_activity_count != old_activity_count) {
+		mutex_exit(&kernel_mutex);
+		goto loop;
+	}
+	mutex_exit(&kernel_mutex);
+
+	/*insert buffer contract*/
+	srv_main_thread_op_info = (char*)"doing insert buffer merge";
+	if (srv_fast_shutdown && srv_shutdown_state > 0)
+		n_bytes_merged = 0;
+	else 
+		n_bytes_merged = ibuf_contract_for_n_pages(TRUE, 20);
+	srv_main_thread_op_info = (char*)"reserving kernel mutex";
+
+	mutex_enter(&kernel_mutex);
+	if (srv_activity_count != old_activity_count) {
+		mutex_exit(&kernel_mutex);
+		goto loop;
+	}
+	mutex_exit(&kernel_mutex);
+
+	/*flush buffer pool*/
+	srv_main_thread_op_info = (char*)"flushing buffer pool pages";
+	n_pages_flushed = buf_flush_batch(BUF_FLUSH_LIST, 100, ut_dulint_max);
+	srv_main_thread_op_info = (char*)"reserving kernel mutex";
+
+	mutex_enter(&kernel_mutex);
+	if (srv_activity_count != old_activity_count) {
+		mutex_exit(&kernel_mutex);
+		goto loop;
+	}
+	mutex_exit(&kernel_mutex);
+	/*等待批量page刷盘完成*/
+	srv_main_thread_op_info = "waiting for buffer pool flush to end";
+	buf_flush_wait_batch_end(BUF_FLUSH_LIST);
+	/*创建checkpoint*/
+	srv_main_thread_op_info = (char*)"making checkpoint";
+	log_checkpoint(TRUE, FALSE);
+
+	mutex_enter(&kernel_mutex);
+	if (srv_activity_count != old_activity_count) {
+		mutex_exit(&kernel_mutex);
+		goto loop;
+	}
+	mutex_exit(&kernel_mutex);
+
+	/*归档日志刷盘*/
+	srv_main_thread_op_info = (char*)"archiving log (if log archive is on)";
+	log_archive_do(FALSE, &n_bytes_archived);
+
+	if (srv_fast_shutdown && srv_shutdown_state > 0) {
+		if (n_tables_to_drop + n_pages_flushed + n_bytes_archived != 0)
+				goto background_loop;
+	} 
+	else if (n_tables_to_drop + n_pages_purged + n_bytes_merged + n_pages_flushed + n_bytes_archived != 0)
+		goto background_loop;
+
+suspend_thread:
+	srv_main_thread_op_info = (char*)"suspending";
+
+	mutex_enter(&kernel_mutex);
+	if (row_get_background_drop_list_len_low() > 0) {
+		mutex_exit(&kernel_mutex);
+		goto loop;
+	}
+
+	/*挂起master线程*/
+	event = srv_suspend_thread();
+	mutex_exit(&kernel_mutex);
+
+	srv_main_thread_op_info = (char*)"waiting for server activity";
+	os_event_wait(event);
+
+	goto loop;
+
+	return NULL;
+}
 

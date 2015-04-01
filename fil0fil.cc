@@ -807,6 +807,16 @@ void fil_aio_wait(ulint segment)
 	mutex_enter(&(system->mutex));
 	/*异步完成了IO,更改对应的fil_node状态*/
 	fil_node_complete_io(fil_node, fil_system, type);
+	mutex_exit(&(system->mutex));
+
+	if(buf_pool_is_block(message)){ /*page刷盘完成*/
+		srv_io_thread_op_info[segment] = "complete io for buf page";
+		buf_page_io_complete(message);
+	}
+	else{ /*日志刷盘完成*/
+		srv_io_thread_op_info[segment] = "complete io for log";
+		log_io_complete(message);
+	}
 }
 
 /*对space刷盘*/
