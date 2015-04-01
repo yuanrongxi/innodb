@@ -80,6 +80,9 @@
     <Filter Include="row">
       <UniqueIdentifier>{35908b6f-a35d-4e77-b84f-5cf30fb9d494}</UniqueIdentifier>
     </Filter>
+    <Filter Include="pars">
+      <UniqueIdentifier>{8f10607c-4f70-48dc-924e-94ef3f879f7a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -429,6 +432,18 @@
     <ClInclude Include="srv0srv.h">
       <Filter>srv</Filter>
     </ClInclude>
+    <ClInclude Include="pars0grm.h">
+      <Filter>pars</Filter>
+    </ClInclude>
+    <ClInclude Include="pars0pars.h">
+      <Filter>pars</Filter>
+    </ClInclude>
+    <ClInclude Include="pars0sym.h">
+      <Filter>pars</Filter>
+    </ClInclude>
+    <ClInclude Include="pars0opt.h">
+      <Filter>pars</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -628,6 +643,21 @@
     </ClCompile>
     <ClCompile Include="srv0srv.cc">
       <Filter>srv</Filter>
+    </ClCompile>
+    <ClCompile Include="pars0grm.cc">
+      <Filter>pars</Filter>
+    </ClCompile>
+    <ClCompile Include="lexyy.c">
+      <Filter>pars</Filter>
+    </ClCompile>
+    <ClCompile Include="pars0pars.cc">
+      <Filter>pars</Filter>
+    </ClCompile>
+    <ClCompile Include="pars0sym.cc">
+      <Filter>pars</Filter>
+    </ClCompile>
+    <ClCompile Include="pars0opt.cc">
+      <Filter>pars</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

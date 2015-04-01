@@ -156,6 +156,10 @@
     <ClInclude Include="page0cur.h" />
     <ClInclude Include="page0page.h" />
     <ClInclude Include="page0types.h" />
+    <ClInclude Include="pars0grm.h" />
+    <ClInclude Include="pars0opt.h" />
+    <ClInclude Include="pars0pars.h" />
+    <ClInclude Include="pars0sym.h" />
     <ClInclude Include="pars0types.h" />
     <ClInclude Include="que0que.h" />
     <ClInclude Include="que0types.h" />
@@ -216,6 +220,7 @@
     <ClCompile Include="ha0storage.cc" />
     <ClCompile Include="hash0hash.cc" />
     <ClCompile Include="ibuf0ibuf.cc" />
+    <ClCompile Include="lexyy.c" />
     <ClCompile Include="lock0lock.cc" />
     <ClCompile Include="log0log.cc" />
     <ClCompile Include="log0recv.cc" />
@@ -230,6 +235,10 @@
     <ClCompile Include="os0thread.cc" />
     <ClCompile Include="page0cur.cc" />
     <ClCompile Include="page0page.cc" />
+    <ClCompile Include="pars0grm.cc" />
+    <ClCompile Include="pars0opt.cc" />
+    <ClCompile Include="pars0pars.cc" />
+    <ClCompile Include="pars0sym.cc" />
     <ClCompile Include="que0que.cc" />
     <ClCompile Include="read0read.cc" />
     <ClCompile Include="rem0cmp.cc" />
