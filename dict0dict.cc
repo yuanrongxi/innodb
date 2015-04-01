@@ -105,7 +105,7 @@ dict_index_t* dict_table_get_index_noninline(dict_table_t* table, char* name)
 	return dict_table_get_index(table, name);
 }
 
-/*初始化autoinc的计数器*/
+/*初始化autoinc的计数器,这个函数是在ha_innobase::innobase_read_and_init_auto_inc中调用初始化的*/
 void dict_table_autoinc_initialize(dict_table_t* table, ib_longlong value)
 {
 	mutex_enter(&(table->autoinc_mutex));
