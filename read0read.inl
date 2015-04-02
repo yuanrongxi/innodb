@@ -14,7 +14,7 @@ UNIV_INLINE void read_view_set_nth_trx_id(read_view_t* view, ulint n, dulint trx
 	*(view->trx_ids + n) = trx_id;
 }
 
-/*判断view是否对trx_id对应的事务可见，应该和事务锁有关系！？*/
+/*判断view是否对trx_id对应的事务可见，应该和事务锁有关系！？ 因为在view中的事务ID都是与持有view事务的数据一致的*/
 UNIV_INLINE ibool read_view_sees_trx_id(read_view_t* view, dulint trx_id)
 {
 	ulint n_ids;

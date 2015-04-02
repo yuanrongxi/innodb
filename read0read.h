@@ -6,6 +6,7 @@
 #include "ut0lst.h"
 #include "trx0trx.h"
 
+typedef struct read_view_struct read_view_t;
 /*事务的可见依赖结构*/
 typedef struct read_view_struct
 {

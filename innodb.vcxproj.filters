@@ -184,6 +184,9 @@
     <None Include="dict0dict.inl">
       <Filter>dict</Filter>
     </None>
+    <None Include="row0row.inl">
+      <Filter>row</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -411,9 +414,6 @@
     <ClInclude Include="dict0mem.h">
       <Filter>dict</Filter>
     </ClInclude>
-    <ClInclude Include="pars0types.h">
-      <Filter>row</Filter>
-    </ClInclude>
     <ClInclude Include="dict0boot.h">
       <Filter>dict</Filter>
     </ClInclude>
@@ -443,6 +443,15 @@
     </ClInclude>
     <ClInclude Include="pars0opt.h">
       <Filter>pars</Filter>
+    </ClInclude>
+    <ClInclude Include="pars0types.h">
+      <Filter>pars</Filter>
+    </ClInclude>
+    <ClInclude Include="row0vers.h">
+      <Filter>row</Filter>
+    </ClInclude>
+    <ClInclude Include="row0row.h">
+      <Filter>row</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -658,6 +667,12 @@
     </ClCompile>
     <ClCompile Include="pars0opt.cc">
       <Filter>pars</Filter>
+    </ClCompile>
+    <ClCompile Include="row0vers.cc">
+      <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="row0row.cc">
+      <Filter>row</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

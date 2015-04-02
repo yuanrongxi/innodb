@@ -100,6 +100,7 @@
     <None Include="read0read.inl" />
     <None Include="rem0cmp.inl" />
     <None Include="rem0rec.inl" />
+    <None Include="row0row.inl" />
     <None Include="trx0purge.inl" />
     <None Include="trx0rec.inl" />
     <None Include="trx0rseg.inl" />
@@ -167,6 +168,8 @@
     <ClInclude Include="rem0cmp.h" />
     <ClInclude Include="rem0rec.h" />
     <ClInclude Include="rem0types.h" />
+    <ClInclude Include="row0row.h" />
+    <ClInclude Include="row0vers.h" />
     <ClInclude Include="srv0que.h" />
     <ClInclude Include="srv0srv.h" />
     <ClInclude Include="srv0start.h" />
@@ -243,6 +246,8 @@
     <ClCompile Include="read0read.cc" />
     <ClCompile Include="rem0cmp.cc" />
     <ClCompile Include="rem0rec.cc" />
+    <ClCompile Include="row0row.cc" />
+    <ClCompile Include="row0vers.cc" />
     <ClCompile Include="srv0que.cc" />
     <ClCompile Include="srv0srv.cc" />
     <ClCompile Include="srv0start.cc" />
