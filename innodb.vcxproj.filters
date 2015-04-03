@@ -453,6 +453,12 @@
     <ClInclude Include="row0row.h">
       <Filter>row</Filter>
     </ClInclude>
+    <ClInclude Include="row0purge.h">
+      <Filter>row</Filter>
+    </ClInclude>
+    <ClInclude Include="row0types.h">
+      <Filter>row</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -672,6 +678,9 @@
       <Filter>row</Filter>
     </ClCompile>
     <ClCompile Include="row0row.cc">
+      <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="row0purge.cc">
       <Filter>row</Filter>
     </ClCompile>
   </ItemGroup>

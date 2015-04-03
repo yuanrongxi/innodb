@@ -201,6 +201,7 @@ ibool row_vers_old_has_index_entry(ibool also_curr, rec_t* rec, mtr_t* mtr, dict
 
 	/*获得表的聚集索引对象*/
 	clust_index = dict_table_get_first_index(index->table);
+
 	if(also_curr && !rec_get_deleted_flag(rec)){
 		heap = mem_heap_create(1024);
 		row = row_build(ROW_COPY_POINTERS, clust_index, rec, heap);
@@ -232,7 +233,7 @@ ibool row_vers_old_has_index_entry(ibool also_curr, rec_t* rec, mtr_t* mtr, dict
 			return FALSE;
 		}
 
-		if (!rec_get_deleted_flag(prev_version)){
+		if (!rec_get_deleted_flag(prev_version)){ /*更早的版本还有在使用的！！*/
 			row = row_build(ROW_COPY_POINTERS, clust_index, prev_version, heap);
 			entry = row_build_index_entry(row, index, heap);
 

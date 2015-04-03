@@ -196,7 +196,7 @@ UNIV_INLINE dulint log_get_lsn()
 	return(lsn);
 }
 
-/*数据库在修改了4个以上的page是必须调用一次这个函数，这个线程没有在做锁同步，除了dictionary mutex以外*/
+/*数据库在修改了4个以上的page是必须调用一次这个函数，这个线程没有做锁同步，除了dictionary mutex以外*/
 UNIV_INLINE void log_free_check()
 {
 	if(log_sys->check_flush_or_checkpoint) /*检查是否需要log buffer刷盘或者建立一个checkpoint*/

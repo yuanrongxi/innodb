@@ -168,7 +168,9 @@
     <ClInclude Include="rem0cmp.h" />
     <ClInclude Include="rem0rec.h" />
     <ClInclude Include="rem0types.h" />
+    <ClInclude Include="row0purge.h" />
     <ClInclude Include="row0row.h" />
+    <ClInclude Include="row0types.h" />
     <ClInclude Include="row0vers.h" />
     <ClInclude Include="srv0que.h" />
     <ClInclude Include="srv0srv.h" />
@@ -246,6 +248,7 @@
     <ClCompile Include="read0read.cc" />
     <ClCompile Include="rem0cmp.cc" />
     <ClCompile Include="rem0rec.cc" />
+    <ClCompile Include="row0purge.cc" />
     <ClCompile Include="row0row.cc" />
     <ClCompile Include="row0vers.cc" />
     <ClCompile Include="srv0que.cc" />
