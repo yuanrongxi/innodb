@@ -1,7 +1,7 @@
 #include "usr0sess.h"
 
 /*获得thr对应的事务对象*/
-UNIV_INLINE trx_get_trx(que_thr_t* thr)
+UNIV_INLINE trx_t* trx_get_trx(que_thr_t* thr)
 {
 	ut_ad(thr);
 

@@ -189,6 +189,8 @@
     <ClInclude Include="trx0types.h" />
     <ClInclude Include="trx0undo.h" />
     <ClInclude Include="ul0crc32.h" />
+    <ClInclude Include="usr0sess.h" />
+    <ClInclude Include="usr0types.h" />
     <ClInclude Include="ut0bh.h" />
     <ClInclude Include="ut0byte.h" />
     <ClInclude Include="ut0dbg.h" />
@@ -266,6 +268,7 @@
     <ClCompile Include="trx0trx.cc" />
     <ClCompile Include="trx0undo.cc" />
     <ClCompile Include="ul0crc32.cc" />
+    <ClCompile Include="usr0sess.cc" />
     <ClCompile Include="ut0bh.cc" />
     <ClCompile Include="ut0byte.cc" />
     <ClCompile Include="ut0dbg.cc" />

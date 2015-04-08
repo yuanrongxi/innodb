@@ -83,6 +83,9 @@
     <Filter Include="pars">
       <UniqueIdentifier>{8f10607c-4f70-48dc-924e-94ef3f879f7a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="sess">
+      <UniqueIdentifier>{c9bf6042-3c9b-4cd4-b923-379d4c16b767}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="univ.h">
@@ -459,6 +462,12 @@
     <ClInclude Include="row0types.h">
       <Filter>row</Filter>
     </ClInclude>
+    <ClInclude Include="usr0sess.h">
+      <Filter>sess</Filter>
+    </ClInclude>
+    <ClInclude Include="usr0types.h">
+      <Filter>sess</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -682,6 +691,9 @@
     </ClCompile>
     <ClCompile Include="row0purge.cc">
       <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="usr0sess.cc">
+      <Filter>sess</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

@@ -458,7 +458,7 @@ UNIV_INLINE byte* trx_undo_update_rec_get_field_no(byte* ptr, ulint* field_no)
 }
 
 /*从undo update rec记录读取数据构建一个update vector*/
-byte* trx_undo_update_rec_get_update(byte* ptr, dict_index_t* index, ulint type, dulint trx_id, 
+byte* trx_undo_update_rec_get_update(byte* ptr, dict_index_t* index, ulint type, dulint trx_id, dulint roll_ptr, 
 									ulint info_bits, mem_heap_t* heap, upd_t** upd)
 {
 	upd_field_t*	upd_field;

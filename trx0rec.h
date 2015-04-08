@@ -39,7 +39,7 @@ byte*							trx_undo_rec_get_row_ref(byte* ptr, dict_index_t* index, dtuple_t** 
 
 byte*							trx_undo_update_rec_get_sys_cols(byte* ptr, dulint* trx_id, dulint* roll_ptr, dulint* info_bits);
 
-byte*							trx_undo_update_rec_get_update(byte* ptr, dict_index_t* index, ulint type, dulint trx_id, 
+byte*							trx_undo_update_rec_get_update(byte* ptr, dict_index_t* index, ulint type, dulint trx_id, dulint roll_ptr,
 									ulint info_bits, mem_heap_t* heap, upd_t** upd);
 
 byte*							trx_undo_rec_get_partial_row(byte* ptr, dict_index_t* index, dtuple** row, mem_heap_t* heap);
