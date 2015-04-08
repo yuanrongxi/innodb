@@ -171,6 +171,7 @@
     <ClInclude Include="row0purge.h" />
     <ClInclude Include="row0row.h" />
     <ClInclude Include="row0types.h" />
+    <ClInclude Include="row0undo.h" />
     <ClInclude Include="row0vers.h" />
     <ClInclude Include="srv0que.h" />
     <ClInclude Include="srv0srv.h" />
@@ -252,6 +253,7 @@
     <ClCompile Include="rem0rec.cc" />
     <ClCompile Include="row0purge.cc" />
     <ClCompile Include="row0row.cc" />
+    <ClCompile Include="row0undo.cc" />
     <ClCompile Include="row0vers.cc" />
     <ClCompile Include="srv0que.cc" />
     <ClCompile Include="srv0srv.cc" />

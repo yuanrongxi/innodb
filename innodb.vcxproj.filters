@@ -468,6 +468,9 @@
     <ClInclude Include="usr0types.h">
       <Filter>sess</Filter>
     </ClInclude>
+    <ClInclude Include="row0undo.h">
+      <Filter>row</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -694,6 +697,9 @@
     </ClCompile>
     <ClCompile Include="usr0sess.cc">
       <Filter>sess</Filter>
+    </ClCompile>
+    <ClCompile Include="row0undo.cc">
+      <Filter>row</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
