@@ -471,6 +471,12 @@
     <ClInclude Include="row0undo.h">
       <Filter>row</Filter>
     </ClInclude>
+    <ClInclude Include="row0uins.h">
+      <Filter>row</Filter>
+    </ClInclude>
+    <ClInclude Include="row0umod.h">
+      <Filter>row</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -699,6 +705,12 @@
       <Filter>sess</Filter>
     </ClCompile>
     <ClCompile Include="row0undo.cc">
+      <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="row0uins.cc">
+      <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="row0umod.cc">
       <Filter>row</Filter>
     </ClCompile>
   </ItemGroup>

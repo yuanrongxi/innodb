@@ -50,6 +50,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -171,6 +172,8 @@
     <ClInclude Include="row0purge.h" />
     <ClInclude Include="row0row.h" />
     <ClInclude Include="row0types.h" />
+    <ClInclude Include="row0uins.h" />
+    <ClInclude Include="row0umod.h" />
     <ClInclude Include="row0undo.h" />
     <ClInclude Include="row0vers.h" />
     <ClInclude Include="srv0que.h" />
@@ -253,6 +256,8 @@
     <ClCompile Include="rem0rec.cc" />
     <ClCompile Include="row0purge.cc" />
     <ClCompile Include="row0row.cc" />
+    <ClCompile Include="row0uins.cc" />
+    <ClCompile Include="row0umod.cc" />
     <ClCompile Include="row0undo.cc" />
     <ClCompile Include="row0vers.cc" />
     <ClCompile Include="srv0que.cc" />
@@ -281,6 +286,13 @@
     <ClCompile Include="ut0ut.cc" />
     <ClCompile Include="ut0vec.cc" />
     <ClCompile Include="ut0wqueue.cc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

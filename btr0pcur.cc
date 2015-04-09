@@ -186,7 +186,7 @@ ibool btr_pcur_restore_position(ulint latch_mode, btr_pcur_t* cursor, mtr_t* mtr
 	cursor->search_mode = old_mode;
 	/*tuple与cursor执行的记录是一致的内容,只需要更新下modify clock*/
 	if (cursor->rel_pos == BTR_PCUR_ON && btr_pcur_is_on_user_rec(cursor, mtr) && 0 == cmp_dtuple_rec(tuple, btr_pcur_get_rec(cursor))){
-			cursor->modify_clock = buf_frame_get_modify_clock(buf_frame_buf(btr_pcur_get_rec(cursor)));
+			cursor->modify_clock = buf_frame_get_modify_clock(buf_frame_align(btr_pcur_get_rec(cursor)));
 			mem_heap_free(heap);
 
 			return TRUE;

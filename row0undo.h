@@ -22,6 +22,7 @@ ibool			row_undo_search_clust_to_pcur(undo_node_t* node, que_thr_t* thr);
 
 que_thr_t*		row_undo_step(que_thr_t* thr);
 
+/*undo node的任务执行结构*/
 struct undo_node_struct
 {
 	que_common_t		common;
@@ -29,14 +30,17 @@ struct undo_node_struct
 	trx_t*				trx;
 	dulint				roll_ptr;
 	trx_undo_rec_t*		undo_rec;
+	dulint				undo_no;
 	ulint				rec_type;
-	dulint				nex_trx_id;
+	dulint				new_roll_ptr;
+	dulint				new_trx_id;
 	btr_pcur_t			pcur;
 	dict_table_t*		table;
 	ulint				cmpl_info;
 	upd_t*				update;
 	dtuple_t*			ref;
 	dtuple_t*			row;
+	dict_index_t*		index;
 	mem_heap_t*			heap;
 };
 
