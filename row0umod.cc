@@ -315,3 +315,116 @@ static ulint row_undo_mod_del_mark_sec(undo_node_t* node, que_thr_t* thr)
 
 	return DB_SUCCESS;
 }
+
+/*回滚辅助索引上的UPD_EXIST记录操作*/
+static ulint row_undo_mod_upd_exist_sec(undo_node_t* node, que_thr_t* thr)
+{
+	mem_heap_t*		heap;
+	dtuple_t*		entry;
+	dict_index_t*	index;
+	ulint			err;
+
+	/*无需修改辅助索引*/
+	if(node->cmpl_info & UPD_NODE_NO_ORD_CHANGE)
+		return DB_SUCCESS;
+
+	heap = mem_heap_create(1024);
+	while(node->index != NULL){
+		index = node->index;
+		if(row_upd_changes_ord_field_binary(node->row, node->index, node->update)){
+			entry = row_build_index_entry(node->row, index, heap);
+			/*删除对应辅助索引上的记录*/
+			err = row_undo_mod_del_mark_or_remove_sec(node, thr, index, entry);
+			if(err != DB_SUCCESS){
+				mem_heap_free(heap);
+				return err;
+			}
+			/*取消修改前记录的del mark标识*/
+			row_upd_index_replace_new_col_vals(entry, index, node->update);
+			row_undo_mod_del_unmark_sec(node, thr, index, entry);
+		}
+
+		node->index = dict_table_get_next_index(node->index);
+	}
+
+	mem_heap_free(heap);
+
+	return DB_SUCCESS;
+}
+
+/*对undo update rec的解析，构建一个回滚行(row)参照*/
+static void row_undo_mod_parse_undo_rec(undo_node_t* node, que_thr_t* thr)
+{
+	dict_index_t*	clust_index;
+	byte*		ptr;
+	dulint		undo_no;
+	dulint		table_id;
+	dulint		trx_id;
+	dulint		roll_ptr;
+	ulint		info_bits;
+	ulint		type;
+	ulint		cmpl_info;
+	ibool		dummy_extern;
+
+	ut_ad(node & thr);
+
+	/*获得type、cmpl_info/undo_no、table id等信息*/
+	ptr = trx_undo_rec_get_pars(node->undo_rec, &type, &cmpl_info, &dummy_extern, &undo_no, &table_id);
+	node->rec_type = type;
+	node->table = dict_table_get_on_id(table_id, thr_get_trx(thr));
+	if(node->table == NULL)
+		return;
+
+	node->new_roll_ptr = roll_ptr;
+	node->new_trx_id = trx_id;
+	node->cmpl_info = cmpl_info;
+
+	clust_index = dict_table_get_first_index(node->table);
+	/*获得roll ptr和trx id*/
+	ptr = trx_undo_update_rec_get_sys_cols(ptr, &trx_id, &roll_ptr, &info_bits);
+	/*构建一个row对象*/
+	ptr = trx_undo_rec_get_row_ref(ptr, clust_index, &(node->ref), node->heap);
+	/*获得这次undo需要修改的记录的列序列（多个列）*/
+	trx_undo_update_rec_get_update(ptr, clust_index, type, trx_id, roll_ptr, info_bits, node->heap, &(node->update));
+}
+
+/*对修改操作做回滚,相当于重演undo log*/
+ulint row_undo_mod(undo_node_t* node, que_thr_t* thr)
+{
+	ibool	found;
+	ulint	err;
+
+	ut_ad(node && thr);
+	ut_ad(node->state == UNDO_NODE_MODIFY);
+
+	row_undo_mod_parse_undo_rec(node, thr);
+	if(node->table == NULL)
+		found = FALSE;
+	else
+		found = row_undo_search_clust_to_pcur(node, thr);
+
+	if(!found){
+		trx_undo_rec_release(node->trx, node->undo_no);
+		node->state = UNDO_NODE_FETCH_NEXT;
+
+		return DB_SUCCESS;
+	}
+	/*获得第一个辅助索引,先对辅助索引上的修改做回滚*/
+	node->index = dict_table_get_next_index(dict_table_get_first_index(node->table));
+	if(node->rec_type == TRX_UNDO_UPD_EXIST_REC)
+		err = row_undo_mod_upd_exist_sec(node, thr);
+	else if(node->rec_type == TRX_UNDO_DEL_MARK_REC)
+		err = row_undo_mod_del_mark_sec(node, thr);
+	else{
+		ut_ad(node->rec_type == TRX_UNDO_UPD_DEL_REC);
+		err = row_undo_mod_upd_del_sec(node, thr);
+	}
+
+	if(err != DB_SUCCESS)
+		return err;
+
+	/*对聚集索引的修改做回滚*/
+	err = row_undo_mod_clust(node, thr);
+
+	return err;
+}
