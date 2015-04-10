@@ -2601,6 +2601,7 @@ ulint lock_sec_rec_read_check_and_lock(ulint flags, rec_t* rec, dict_index_t* in
 	return err;
 }
 
+/*尝试在聚集索引的rec上获得一个mode类型的事务锁，在上锁之前会进行隐式锁检查*/
 ulint lock_clust_rec_read_check_and_lock(ulint flags, rec_t* rec, dict_index_t* index, ulint mode, que_thr_t* thr)
 {
 	ulint	err;
@@ -2617,7 +2618,7 @@ ulint lock_clust_rec_read_check_and_lock(ulint flags, rec_t* rec, dict_index_t* 
 	ut_ad(mode != LOCK_S || lock_table_has(thr_get_trx(thr), index->table, LOCK_IS));
 
 	if(!page_rec_is_supremum(rec))
-		lock_rec_convert_impl_to_expl(rec, index); /*在记录行上加上一个LOCK_X锁*/
+		lock_rec_convert_impl_to_expl(rec, index); /*将隐式锁转化为一个显示的X-LOCK*/
 
 	err = lock_rec_lock(FALSE, mode, rec, index, thr);
 

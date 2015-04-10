@@ -477,6 +477,9 @@
     <ClInclude Include="row0umod.h">
       <Filter>row</Filter>
     </ClInclude>
+    <ClInclude Include="row0ins.h">
+      <Filter>row</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -711,6 +714,9 @@
       <Filter>row</Filter>
     </ClCompile>
     <ClCompile Include="row0umod.cc">
+      <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="row0ins.cc">
       <Filter>row</Filter>
     </ClCompile>
   </ItemGroup>

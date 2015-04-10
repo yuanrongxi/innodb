@@ -761,7 +761,7 @@ byte* btr_cur_parse_update_in_place(byte* ptr, byte* end_ptr, page_t* page, mtr_
 
 	return ptr;
 }
-/*通过二级索引修改对应的记录*/
+/*通过辅助索引修改对应的记录*/
 ulint btr_cur_update_sec_rec_in_place(btr_cur_t* cursor, upd_t* update, que_thr_t* thr, mtr_t* mtr)
 {
 	dict_index_t*	index = cursor->index;

@@ -251,7 +251,7 @@ dict_table_t* dict_table_get(char* table_name, trx_t* trx)
 	UT_NOT_USED(trx);
 
 	LOCK_DICT();
-	table=  dict_table_get_low(table_name);
+	table = dict_table_get_low(table_name);
 	UNLOCK_DICT();
 
 	if(table != NULL && !table->stat_initialized){
