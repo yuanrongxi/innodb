@@ -190,6 +190,12 @@
     <None Include="row0row.inl">
       <Filter>row</Filter>
     </None>
+    <None Include="eval0eval.inl">
+      <Filter>include</Filter>
+    </None>
+    <None Include="row0upd.inl">
+      <Filter>row</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -480,6 +486,12 @@
     <ClInclude Include="row0ins.h">
       <Filter>row</Filter>
     </ClInclude>
+    <ClInclude Include="eval0eval.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="row0upd.h">
+      <Filter>row</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -717,6 +729,9 @@
       <Filter>row</Filter>
     </ClCompile>
     <ClCompile Include="row0ins.cc">
+      <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="row0upd.cc">
       <Filter>row</Filter>
     </ClCompile>
   </ItemGroup>

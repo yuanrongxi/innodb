@@ -86,6 +86,7 @@
     <None Include="data0type.inl" />
     <None Include="dict0dict.inl" />
     <None Include="dyn0dyn.inl" />
+    <None Include="eval0eval.inl" />
     <None Include="fsp0fsp.inl" />
     <None Include="fut0fut.inl" />
     <None Include="fut0lst.inl" />
@@ -102,6 +103,7 @@
     <None Include="rem0cmp.inl" />
     <None Include="rem0rec.inl" />
     <None Include="row0row.inl" />
+    <None Include="row0upd.inl" />
     <None Include="trx0purge.inl" />
     <None Include="trx0rec.inl" />
     <None Include="trx0rseg.inl" />
@@ -132,6 +134,7 @@
     <ClInclude Include="dict0mem.h" />
     <ClInclude Include="dict0types.h" />
     <ClInclude Include="dyn0dyn.h" />
+    <ClInclude Include="eval0eval.h" />
     <ClInclude Include="fil0fil.h" />
     <ClInclude Include="fsp0fsp.h" />
     <ClInclude Include="fut0fut.h" />
@@ -176,6 +179,7 @@
     <ClInclude Include="row0uins.h" />
     <ClInclude Include="row0umod.h" />
     <ClInclude Include="row0undo.h" />
+    <ClInclude Include="row0upd.h" />
     <ClInclude Include="row0vers.h" />
     <ClInclude Include="srv0que.h" />
     <ClInclude Include="srv0srv.h" />
@@ -261,6 +265,7 @@
     <ClCompile Include="row0uins.cc" />
     <ClCompile Include="row0umod.cc" />
     <ClCompile Include="row0undo.cc" />
+    <ClCompile Include="row0upd.cc" />
     <ClCompile Include="row0vers.cc" />
     <ClCompile Include="srv0que.cc" />
     <ClCompile Include="srv0srv.cc" />
