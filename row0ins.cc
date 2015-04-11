@@ -664,5 +664,324 @@ UNIV_INLINE ulint row_ins_must_modify(btr_cur_t* cursor)
 	return 0;
 }
 
+/*尝试插入一个索引记录到索引树上，索引必须如果是聚集索引或者辅助唯一性索引会直接插入到索引树上,
+如果是其他的辅助索引会先写到ibuffer中，再阶段性合并到辅助索引树上*/
+ulint row_ins_index_entry_low(ulint mode, dict_index_t* index, dtuple_t* entry, ulint* ext_vec, ulint n_ext_vec, que_thr_t* thr)
+{
+	btr_cur_t	cursor;
+	ulint		ignore_sec_unique	= 0;
+	ulint		modify;
+	rec_t*		insert_rec;
+	rec_t*		rec;
+	ulint		err;
+	ulint		n_unique;
+	big_rec_t*	big_rec	= NULL;
+	mtr_t		mtr;
+
+	log_free_check();
+
+	mtr_start(&mtr);
+
+	cursor.thr = thr;
+	if(!thr_get_trx(thr)->check_unique_secondary)
+		ignore_sec_unique = BTR_IGNORE_SEC_UNIQUE;
+	/*先判断是否能插入到ibuffer中，如果能，会插入到ibuffer中，如果不能，会找到index tree上对应的cursor位置,便于后面的insert和update*/
+	btr_cur_search_to_nth_level(index, 0, entry, PAGE_CUR_LE, mode | BTR_INSERT | ignore_sec_unique, &cursor, 0, &mtr);
+	if(cursor.flag == BTR_CUR_INSERT_TO_IBUF){ /*以insert buffer方式插入*/
+		err = DB_SUCCESS;
+		goto function_exit;
+	}
+
+	n_unique = dict_index_get_n_unique(index);
+	if(index->type & DICT_UNIQUE && (cursor.up_match >= n_unique || cursor.low_match >= n_unique)){
+		if (index->type & DICT_CLUSTERED) { /*聚集索引*/	
+			err = row_ins_duplicate_error_in_clust(&cursor, entry, thr, &mtr); /*判断键值重复*/
+			if(err != DB_SUCCESS)
+				goto function_exit;
+		}
+		else{
+			mtr_commit(&mtr);
+			/*在辅助索引上判断键值重复，在下面这个函数里面会启动一个新的mini transcation，所以上面的mtr需要先入log*/
+			err = row_ins_scan_sec_index_for_duplicate(index, entry, thr);
+			mtr_start(&mtr);
+			if(err != DB_SUCCESS)
+				goto function_exit;
+
+			btr_cur_search_to_nth_level(index, 0, entry, PAGE_CUR_LE, mode | BTR_INSERT, &cursor, 0, &mtr);
+		}
+	}
+
+	/*判断是否是update*/
+	modify = row_ins_must_modify(&cursor);
+	if(modify != 0){ /*将insert操作转化为update操作,因为索引树上有更老版本的记录，有可能已经del mark了*/
+		if(modify == ROW_INS_NEXT){
+			rec = page_rec_get_next(btr_cur_get_rec(&cursor));
+			btr_cur_position(index, rec, &cursor);
+		}
+
+		if(index->type & DICT_CLUSTERED) /*聚集索引上的修改*/
+			err = row_ins_clust_index_entry_by_modify(mode, &cursor, &big_rec, entry, ext_vec, n_ext_vec, thr, &mtr);
+		else
+			err = row_ins_sec_index_entry_by_modify(&cursor, entry, thr, &mtr);
+	}
+	else{ /*直接插入到索引树上*/
+		if (mode == BTR_MODIFY_LEAF)
+			err = btr_cur_optimistic_insert(0, &cursor, entry, &insert_rec, &big_rec, thr, &mtr);
+		else {
+			ut_a(mode == BTR_MODIFY_TREE);
+			err = btr_cur_pessimistic_insert(0, &cursor, entry, &insert_rec, &big_rec, thr, &mtr);
+		}
+		/*设置记录各个列的长度标示位*/
+		if(err == DB_SUCCESS && ext_vec)
+			rec_set_field_extern_bits(insert_rec, ext_vec, n_ext_vec, &mtr);
+	}
+
+function_exit:
+	mtr_commit(&mtr);
+
+	/*假如记录太大，需要分页进行存储*/
+	if(big_rec){
+		mtr_start(&mtr);
+		btr_cur_search_to_nth_level(index, 0, entry, PAGE_CUR_LE, BTR_MODIFY_TREE, &cursor, 0, &mtr);
+		/*分页存储大列*/
+		err = btr_store_big_rec_extern_fields(index, btr_cur_get_rec(&cursor), big_rec, &mtr);
+		if(modify)
+			dtuple_big_rec_free(big_rec);
+		else
+			dtuple_convert_back_big_rec(index, entry, big_rec);
+		mtr_commit(&mtr);
+	}
+
+	return err;
+}
+
+/*******************************************************************
+Inserts an index entry to index. Tries first optimistic, then pessimistic
+descent down the tree. If the entry matches enough to a delete marked record,
+performs the insert by updating or delete unmarking the delete marked
+record. 
+插入一条索引记录，先尝试用乐观方式插入到索引树上，如果失败，尝试用悲观方式插入。
+在插入过程，如果记录索引对应的索引树上有历史的删除记录，会转化成一个UPDATE操作*/
+ulint row_ins_index_entry(dict_index_t* index, dtuple_t* entry, ulint* ext_vec, ulint n_ext_vec, que_thr_t* thr)
+{
+	ulint	err;
+
+	if (UT_LIST_GET_FIRST(index->table->foreign_list)) {
+		err = row_ins_check_foreign_constraints(index->table, index, entry, thr); /*检查外键约束*/
+		if (err != DB_SUCCESS)
+			return(err);
+	}
+	/* Try first optimistic descent to the B-tree */
+	err = row_ins_index_entry_low(BTR_MODIFY_LEAF, index, entry, ext_vec, n_ext_vec, thr);
+	if(err != DB_FAIL)
+		return err;
+	/* Try then pessimistic descent to the B-tree */
+	return row_ins_index_entry_low(BTR_MODIFY_TREE, index, entry,ext_vec, n_ext_vec, thr);
+}
+
+/*将row中的列值按照entry的列设置到entry中*/
+UNIV_INLINE void row_ins_index_entry_set_vals(dtuple_t* entry, dtuple_t* row)
+{
+	dfield_t*	field;
+	dfield_t*	row_field;
+	ulint		n_fields;
+	ulint		i;
+
+	n_fields = dtuple_get_n_fields(entry);
+	for(i = 0; i < n_fields; i++){
+		field = dtuple_get_nth_field(entry, i);
+		row_field = dtuple_get_nth_field(row, field->col_no);
+		field->data = row_field->data;
+		field->len = row_field->len;
+	}
+}
+
+/*按照node的任务执行信息插入一条索引记录*/
+static ulint row_ins_index_entry_step(ins_node_t* node, que_thr_t* thr)
+{
+	ulint err;
+
+	ut_ad(dtuple_check_typed(node->row));
+	/*获得entry的记录值，因为每个索引要求的列是不一样的，所以需要按照索引来构建索引记录*/
+	row_ins_index_entry_set_vals(node->entry, node->row);
+
+	ut_ad(dtuple_check_typed(node->entry));
+	return row_ins_index_entry(node->index, node->entry, NULL, 0, thr);
+}
+
+/*为node对应的row分配一个row id*/
+UNIV_INLINE void row_ins_alloc_row_id_step(ins_node_t* node)
+{
+	dulint	row_id;
+
+	ut_ad(node->state == INS_NODE_ALLOC_ROW_ID);
+	if(dict_table_get_first_index(node->table)->type & DICT_UNIQUE) /*唯一聚集索引没有row id?*/
+		return ;
+
+	row_id = dict_sys_get_new_row_id();
+	dict_sys_write_row_id(node->row_id_buf, row_id);
+}
+
+/*通过node->values_list构建一个插入row(行)对象*/
+UNIV_INLINE void row_ins_get_row_from_values(ins_node_t* node)
+{
+	que_node_t*	list_node;
+	dfield_t*	dfield;
+	dtuple_t*	row;
+	ulint		i;
+
+	row = node->row;  
+
+	i = 0;
+	list_node = node->values_list;
+	while(list_node != NULL){
+		eval_exp(list_node);
+
+		dfield = dtuple_get_nth_field(row, i);
+		dfield_copy_data(dfield, que_node_get_val(list_node));
+
+		i ++;
+		list_node = que_node_get_next(list_node);
+	}
+}
+
+/*通过select list中获得一个插入行(row)*/
+UNIV_INLINE void row_ins_get_row_from_select(ins_node_t* node)
+{
+	que_node_t*	list_node;
+	dfield_t*	dfield;
+	dtuple_t*	row;
+	ulint		i;
+
+	row = node->row;
+
+	i = 0;
+	list_node = node->select->select_list;
+	while (list_node) {
+		dfield = dtuple_get_nth_field(row, i);
+		dfield_copy_data(dfield, que_node_get_val(list_node));
+
+		i++;
+		list_node = que_node_get_next(list_node);
+	}
+}
+
+/*插入一行(row)*/
+ulint row_ins(ins_node_t* node, que_thr_t* thr)
+{
+	ulint	err;
+
+	ut_ad(node && thr);
+
+	if(node->state == INS_NODE_ALLOC_ROW_ID){
+		/*构建一个row id*/
+		row_ins_alloc_row_id_step(node);
+		/*获得聚集索引和聚集索引记录行的tuple对象*/
+		node->index = dict_table_get_first_index(node->table);
+		node->entry = UT_LIST_GET_FIRST(node->entry_list);
+		/*构建插入行对象*/
+		if(node->ins_type == INS_SEARCHED)
+			row_ins_get_row_from_select(node);
+		else if(node->ins_type == INS_VALUES)
+			row_ins_get_row_from_values(node);
+
+		node->state = INS_NODE_INSERT_ENTRIES;
+	}
+
+	while(node->index != NULL){
+		err = row_ins_index_entry_step(node, thr);
+		if(err != DB_SUCCESS)
+			return err;
+
+		/*进行下一个索引记录的插入*/
+		node->index = dict_table_get_next_index(node->index);
+		node->entry = UT_LIST_GET_NEXT(tuple_list, node->entry);
+	}
+}
+
+/*执行一个插入记录行的任务*/
+que_thr_t* row_ins_step(que_thr_t* thr)
+{
+	ins_node_t*	node;
+	que_node_t*	parent;
+	sel_node_t*	sel_node;
+	trx_t*		trx;
+	ulint		err;
+
+	ut_ad(thr);
+
+	trx = thr_get_trx(thr);
+	/*激活事务*/
+	trx_start_if_not_started(trx);
+
+	node = thr->run_node;
+	ut_ad(que_node_get_type(node) == QUE_NODE_INSERT);
+
+	parent = que_node_get_parent(node);
+	sel_node = node->select;
+
+	if(thr->prev_node == parent)
+		node->state = INS_NODE_SET_IX_LOCK;
+
+	/* If this is the first time this node is executed (or when
+	execution resumes after wait for the table IX lock), set an
+	IX lock on the table and reset the possible select node. */
+	if(node->state == INS_NODE_SET_IX_LOCK){
+		/* No need to do IX-locking or write trx id to buf,同一个事务,可能是事务锁唤醒操作*/
+		if(UT_DULINT_EQ(trx->id, node->trx_id))
+			goto same_trx;
+
+		trx_write_trx_id(node->trx_id_buf, trx->id);
+		/*对操作表上一个LOCK_IX意向锁,为的是在node->table中的X-LOCK和S-LOCK对应的事务提交后，唤醒插入线程获得IX-LOCK操作权*/
+		err = lock_table(0, node->table, LOCK_IX, thr);
+		if(err != DB_SUCCESS)
+			goto error_handling;
+		/*记录锁的trx_id*/
+		node->trx_id = trx->id;
+same_trx：
+		node->state = INS_NODE_ALLOC_ROW_ID;
+		if (node->ins_type == INS_SEARCHED) {
+			sel_node->state = SEL_NODE_OPEN;
+			thr->run_node = sel_node;
+
+			return thr;
+		}
+	}
+
+	if ((node->ins_type == INS_SEARCHED) && (sel_node->state != SEL_NODE_FETCH)){
+		ut_ad(sel_node->state == SEL_NODE_NO_MORE_ROWS);
+		/* No more rows to insert */
+		thr->run_node = parent;
+
+		return(thr);
+	}
+	/*执行行记录插入任务*/
+	err = row_ins(node, thr);
+
+error_handling:
+	trx->error_state = err;
+
+	if (err == DB_SUCCESS) {
+	} 
+	else if (err == DB_LOCK_WAIT) /*锁等待*/
+		return(NULL);
+	else 
+		return(NULL);
+
+	/* DO THE TRIGGER ACTIONS HERE */
+	if (node->ins_type == INS_SEARCHED) {
+		/* Fetch a row to insert */
+		thr->run_node = sel_node;
+	} 
+	else
+		thr->run_node = que_node_get_parent(node);
+
+	return thr;
+}
+
+
+
+
+
 
 

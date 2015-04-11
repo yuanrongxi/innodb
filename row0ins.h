@@ -56,7 +56,7 @@ void						ins_node_set_new_row(ins_node_t* node, dtuple_t* row);
 
 ulint						row_ins_index_entry_low(ulint mode, dict_index_t* index, dtuple_t* entry, ulint* ext_vec, ulint n_ext_vec, que_thr_t* thr);
 
-ulint						row_ins_index_entry(dict_index_t* index, dtuple_t* entry, ulint n_ext_vec, que_thr_t* thr);
+ulint						row_ins_index_entry(dict_index_t* index, dtuple_t* entry, ulint* ext_vec, ulint n_ext_vec, que_thr_t* thr);
 
 ulint						row_ins(ins_node_t* node, que_thr_t* thr);
 
