@@ -52,7 +52,7 @@ struct upd_node_struct
 
 	upd_node_t*				cascade_node;
 	
-	mem_heap_t*				select;
+	mem_heap_t*				cascade_heap;
 
 	select_node_t*			select;
 	btr_pcur_t*				pcur;
