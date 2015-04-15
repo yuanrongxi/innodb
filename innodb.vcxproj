@@ -102,7 +102,9 @@
     <None Include="read0read.inl" />
     <None Include="rem0cmp.inl" />
     <None Include="rem0rec.inl" />
+    <None Include="row0mysql.inl" />
     <None Include="row0row.inl" />
+    <None Include="row0sel.inl" />
     <None Include="row0upd.inl" />
     <None Include="trx0purge.inl" />
     <None Include="trx0rec.inl" />
@@ -173,8 +175,10 @@
     <ClInclude Include="rem0rec.h" />
     <ClInclude Include="rem0types.h" />
     <ClInclude Include="row0ins.h" />
+    <ClInclude Include="row0mysql.h" />
     <ClInclude Include="row0purge.h" />
     <ClInclude Include="row0row.h" />
+    <ClInclude Include="row0sel.h" />
     <ClInclude Include="row0types.h" />
     <ClInclude Include="row0uins.h" />
     <ClInclude Include="row0umod.h" />
@@ -260,8 +264,10 @@
     <ClCompile Include="rem0cmp.cc" />
     <ClCompile Include="rem0rec.cc" />
     <ClCompile Include="row0ins.cc" />
+    <ClCompile Include="row0mysql.cc" />
     <ClCompile Include="row0purge.cc" />
     <ClCompile Include="row0row.cc" />
+    <ClCompile Include="row0sel.cc" />
     <ClCompile Include="row0uins.cc" />
     <ClCompile Include="row0umod.cc" />
     <ClCompile Include="row0undo.cc" />

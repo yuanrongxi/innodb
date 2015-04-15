@@ -196,6 +196,12 @@
     <None Include="row0upd.inl">
       <Filter>row</Filter>
     </None>
+    <None Include="row0mysql.inl">
+      <Filter>row</Filter>
+    </None>
+    <None Include="row0sel.inl">
+      <Filter>row</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ut0byte.h">
@@ -492,6 +498,12 @@
     <ClInclude Include="row0upd.h">
       <Filter>row</Filter>
     </ClInclude>
+    <ClInclude Include="row0mysql.h">
+      <Filter>row</Filter>
+    </ClInclude>
+    <ClInclude Include="row0sel.h">
+      <Filter>row</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ut0byte.cc">
@@ -732,6 +744,12 @@
       <Filter>row</Filter>
     </ClCompile>
     <ClCompile Include="row0upd.cc">
+      <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="row0mysql.cc">
+      <Filter>row</Filter>
+    </ClCompile>
+    <ClCompile Include="row0sel.cc">
       <Filter>row</Filter>
     </ClCompile>
   </ItemGroup>
