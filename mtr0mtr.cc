@@ -22,24 +22,14 @@ UNIV_INLINE void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
 			buf_page_release((buf_block_t*)object, type, mtr);
 		else if(type == MTR_MEMO_S_LOCK)
 			rw_lock_s_unlock((rw_lock_t*)object);
-#ifndef UNIV_DEBUG
 		else
 			rw_lock_x_unlock((rw_lock_t*)object);
-#endif
-#ifdef UNIV_DEBUG
-		else if (type == MTR_MEMO_X_LOCK)
-			rw_lock_x_unlock((rw_lock_t*)object);
-		else{
-			ut_ad(type == MTR_MEMO_MODIFY);
-			ut_ad(mtr_memo_contains(mtr, object, MTR_MEMO_PAGE_X_FIX));
-		}
-#endif
 	}
 
 	slot->object = NULL;
 }
 
-/*释放掉所有memo中latch的控制权*/
+/*释放掉mtr所有占用的latch的控制权*/
 UNIV_INLINE void mtr_memo_pop_all(mtr_t* mtr)
 {
 	mtr_memo_slot_t*	slot;
@@ -50,6 +40,8 @@ UNIV_INLINE void mtr_memo_pop_all(mtr_t* mtr)
 	ut_ad(mtr->magic_n == MTR_MAGIC_N);
 	ut_ad(mtr->state == MTR_COMMITTING); 
 
+	/*从后向前释放锁的顺序，例如lack A->lock b->lock c，那么释放锁的顺序就是unlock c->unlock b->unlock a,
+	这样做是为了防止latch dealock*/
 	memo = &(mtr->memo);
 	offset = dyn_array_get_data_size(memo);
 	while(offset > 0){
@@ -59,7 +51,7 @@ UNIV_INLINE void mtr_memo_pop_all(mtr_t* mtr)
 	}
 }
 
-/*将page的修改操作刷到log中*/
+/*将整个page内容刷到log中,相当于一个物理日志*/
 static void mtr_log_write_full_page(page_t* page, ulint i, ulint n_pages, mtr_t* mtr)
 {
 	byte*	buf;
@@ -74,7 +66,7 @@ static void mtr_log_write_full_page(page_t* page, ulint i, ulint n_pages, mtr_t*
 	len = (ptr - buf) + UNIV_PAGE_SIZE;
 	
 	if(i == n_pages - 1){
-		if(n_pages > 1){ /*多页操作作为一个log rec写入日志系统*/
+		if(n_pages > 1){ /*多页操作作为一个log rec写入日志系统,最后一页设置为rec end,标示一些列页内容日志结束*/
 			*(buf + len) = MLOG_MULTI_REC_END;
 			len ++;
 		}
@@ -100,6 +92,7 @@ byte* mtr_log_parse_full_page(byte* ptr, byte* end_ptr, page_t* page)
 	return prt + UNIV_PAGE_SIZE;
 }
 
+/*将mtr的n_pages个MTR_MEMO_PAGE_X_FIX的page全部刷入redo log*/
 void mtr_log_write_backup_full_pages(mtr_t* mtr, ulint n_pages)
 {
 	mtr_memo_slot_t* slot;
@@ -136,7 +129,7 @@ void mtr_log_write_backup_full_pages(mtr_t* mtr, ulint n_pages)
 	ut_ad(i == n_pages);
 }
 
-/*判断在线备份是在mtr首次更改页的操作是不之后*/
+/*判断在线备份是在mtr首次更改页的操作之后*/
 static ibool mtr_first_to_modify_page_after_backup(mtr_t* mtr, ulint* n_pages)
 {
 	mtr_memo_slot_t* slot;
@@ -194,13 +187,12 @@ static void mtr_log_reserve_and_write(mtr_t* mtr)
 
 	mlog = &mtr->log;
 	first_data = dyn_block_get_data(mlog);
-
 	if(mtr->n_log_recs > 1)
 		mlog_catenate_ulint(mtr, MLOG_MULTI_REC_END, MLOG_1BYTE); /*写入一个操作type*/
 	else
 		*first_data = (byte)((ulint)*first_data | MLOG_SINGLE_REC_FLAG);
 
-	if(mlog->heap == NULL){
+	if(mlog->heap == NULL){ /*mtr->log只有一个block，直接快速写入就行了*/
 		/*将mlog中的日志信息快速刷入log_sys->buf当中*/
 		mtr->end_lsn = log_reserve_and_write_fast(first_data, dyn_block_get_used(mlog), &(mtr->start_lsn), &success);
 		if(success)
@@ -211,7 +203,7 @@ static void mtr_log_reserve_and_write(mtr_t* mtr)
 	data_size =dyn_array_get_data_size(mlog);
 	mtr->start_lsn = log_reserve_and_open(data_size);
 	if(mtr->log_mode == MTR_LOG_ALL){
-		/*数据正在热备且备份之前有页改动*/
+		/*数据正在热备且备份之前有页改动,必须进行全页日志记录*/
 		if(log_get_online_backup_state_low() && mtr_first_to_modify_page_after_backup(mtr, &n_modified_pages)){
 			log_close();
 			log_release();
@@ -221,7 +213,7 @@ static void mtr_log_reserve_and_write(mtr_t* mtr)
 		}
 		else{
 			block = mlog;
-			/*将mlog中的操作日志数据逐步刷入redo log buffer当中*/
+			/*将mlog中的操作日志数据逐步刷入redo log buffer当中,增量修改日志记录，逻辑日志*/
 			while(block != NULL){
 				log_write_low(dyn_block_get_data(block),dyn_block_get_used(block));
 				block = dyn_array_get_next_block(mlog, block);
@@ -242,9 +234,8 @@ void mtr_commit(mtr_t* mtr)
 	ut_ad(mtr);
 	ut_ad(mtr->magic_n == MTR_MAGIC_N);
 	ut_ad(mtr->state == MTR_ACTIVE);
-#ifdef UNIV_DEBUG
+
 	mtr->state = MTR_COMMITTING;
-#endif
 
 	if (mtr->modifications) /*有页改动，进行日志刷盘*/
 		mtr_log_reserve_and_write(mtr);
@@ -255,9 +246,7 @@ void mtr_commit(mtr_t* mtr)
 	if (mtr->modifications)
 		log_release();
 
-#ifdef UNIV_DEBUG
 	mtr->state = MTR_COMMITTED;
-#endif
 
 	dyn_array_free(&(mtr->memo));
 	dyn_array_free(&(mtr->log));

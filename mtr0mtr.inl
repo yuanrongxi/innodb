@@ -11,10 +11,8 @@ UNIV_INLINE mtr_t* mtr_start(mtr_t* mtr)
 	mtr->modifications = FALSE;
 	mtr->n_log_recs = 0;
 
-#ifdef UNIV_DEBUG
 	mtr->state = MTR_ACTIVE;
 	mtr->magic_n = MTR_MAGIC_N;
-#endif
 
 	return(mtr);
 }
@@ -55,7 +53,7 @@ UNIV_INLINE void mtr_release_s_latch_at_savepoint(mtr_t* mtr, ulint savepoint, r
 	ut_ad(mtr->magic_n == MTR_MAGIC_N);
 	ut_ad(mtr->state == MTR_ACTIVE);
 
-	memo = &mtr->memo;
+	memo = &(mtr->memo);
 	ut_ad(dyn_array_get_data_size(memo) > savepoint);
 	slot = dyn_array_get_element(memo, savepoint);
 
@@ -82,19 +80,19 @@ UNIV_INLINE ibool mtr_memo_contains(mtr_t* mtr, void* object, ulint type)
 	while(offset > 0){
 		offset -= sizeof(mtr_memo_slot_t);
 		slot = dyn_array_get_element(memo, offset);
-		if(object == lot->object && type == slot->type)
+		if(object == slot->object && type == slot->type)
 			return TRUE;
 	}
 
 	return FALSE;
 }
 
-UNIV_INLINE ulint mtr_get_log(mtr_t* mtr)
+UNIV_INLINE dyn_array_t* mtr_get_log(mtr_t* mtr)
 {
 	ut_ad(mtr);
 	ut_ad(mtr->magic_n == MTR_MAGIC_N);
 
-	return &mtr->log;
+	return &(mtr->log);
 }
 
 UNIV_INLINE ulint mtr_get_log_mode(mtr_t* mtr)

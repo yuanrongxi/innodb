@@ -84,11 +84,7 @@ UNIV_INLINE ibool		rw_lock_s_lock_func_nowait(rw_lock_t* lock, char* file_name, 
 
 UNIV_INLINE ibool		rw_lock_x_lock_func_nowait(rw_lock_t* lock, char* file_name, ulint line);
 
-UNIV_INLINE void		rw_lock_s_unlock_func(rw_lock_t* lock, 
-#ifdef UNIV_SYNC_DEBUG
-	ulint pass, 
-#endif
-);
+UNIV_INLINE void		rw_lock_s_unlock_func(rw_lock_t* lock);
 
 void					rw_lock_x_lock_func(rw_lock_t* lock, ulint pass, char* file_name, ulint line);
 UNIV_INLINE void		rw_lock_x_unlock_func(rw_lock_t* lock, 
