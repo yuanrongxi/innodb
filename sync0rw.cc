@@ -178,11 +178,7 @@ UNIV_INLINE ibool rw_lock_x_lock_func_nowait(rw_lock_t* lock, char* file_name, u
 	return success;
 }
 
-UNIV_INLINE void rw_lock_s_unlock_func(rw_lock_t* lock,
-#ifdef UNIV_SYNC_DEBUG
-	ulint pass,
-#endif
-)
+UNIV_INLINE void rw_lock_s_unlock_func(rw_lock_t* lock)
 {
 	mutex_t* mutex = &(lock->mutex);
 	ibool sg = FALSE;
@@ -192,9 +188,6 @@ UNIV_INLINE void rw_lock_s_unlock_func(rw_lock_t* lock,
 	ut_a(lock->reader_count > 0);
 	lock->reader_count --;
 
-#ifdef UNIV_SYNC_DEBUG
-	rw_lock_remove_debug_info(lock, pass, RW_LOCK_SHARED);
-#endif
 	if (lock->waiters && (lock->reader_count == 0)) {
 		sg = TRUE;
 		rw_lock_set_waiters(lock, 0);

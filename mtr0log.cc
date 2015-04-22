@@ -51,6 +51,7 @@ byte* mlog_parse_initial_log_record(byte* ptr, byte* end_ptr, byte* type, ulint*
 	return ptr;
 }
 
+/*对mini transcation的整型数推演*/
 byte* mlog_parse_nbytes(ulint type, byte* ptr, byte* end_ptr, byte* page)
 {
 	ulint	offset;
