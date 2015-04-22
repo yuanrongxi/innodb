@@ -489,7 +489,7 @@ static lock_t* lock_rec_copy(lock_t* lock, mem_heap_t* heap)
 	return dupl_lock;
 }
 
-/*获得in_lock的前一个的行记录锁,这个记录行的行序号是heap_no*/
+/*获得in_lock的前一个的行记录锁,这个记录行锁的行序号是heap_no*/
 static lock_t* lock_rec_get_prev(lock_t* in_lock, ulint heap_no)
 {
 	lock_t*	lock;
@@ -515,6 +515,7 @@ static lock_t* lock_rec_get_prev(lock_t* in_lock, ulint heap_no)
 
 		lock = lock_rec_get_next_on_page(lock);
 	}
+	return NULL;
 }
 
 /*判断事务trx是否持有table的锁比mode更高强度的锁,如果有，返回lock指针*/
@@ -524,7 +525,7 @@ UNIV_INLINE lock_t* lock_table_has(trx_t* trx, dict_table_t* table, ulint mode)
 
 	ut_ad(mutex_own(&kernel_mutex));
 
-	/*从后面扫描到前面, 可能trx事务已经有更高强度的锁在这个table上*/
+	/*从后面扫描到前面, 可能trx事务已经有更高强度的锁在这个table上,一般锁表示先加意向锁，再加S-LOCK或者X-LOCK*/
 	lock = UT_LIST_GET_LAST(table->locks);
 	while(lock != NULL){
 		if(lock->trx == trx && lock_mode_stronger_or_eq(lock_get_mode(lock), mode)){
@@ -600,7 +601,7 @@ UNIV_INLINE lock_t* lock_rec_find_similar_on_page(ulint type_mode, rec_t* rec, t
 	return NULL;
 }
 
-/*查找rec记录的二级索引是否隐式锁*/
+/*查找rec记录的二级索引是否隐式锁,如果有返回其对应TRX对象,其实就是历史记录版本的修改还没有提交，X-LOCK还被其继续持有*/
 trx_t* lock_sec_rec_some_has_impl_off_kernel(rec_t* rec, dict_index_t* index)
 {
 	page_t*	page;
@@ -620,7 +621,7 @@ trx_t* lock_sec_rec_some_has_impl_off_kernel(rec_t* rec, dict_index_t* index)
 }
 
 /*建立一个记录行锁*/
-static lock_t* lock_rec_create(ulint type_mode, rec_t* rec, dict_index* index, trx_t* trx)
+static lock_t* lock_rec_create(ulint type_mode, rec_t* rec, dict_index_t* index, trx_t* trx)
 {
 	page_t*	page;
 	lock_t*	lock;
@@ -1747,7 +1748,7 @@ void lock_table_unlock_auto_inc(trx_t* trx)
 }
 
 /*释放一个事务的所有锁请求*/
-void lock_release_off_kernel(trx_id* trx)
+void lock_release_off_kernel(trx_t* trx)
 {
 	ulint	count;
 	lock_t*	lock;

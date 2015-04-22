@@ -122,7 +122,7 @@ trx_t* row_vers_impl_x_locked_off_kernel(rec_t* rec, dict_index_t* index)
 			mem_heap_free(heap2);
 
 		if(prev_version != NULL){
-			row = row_build(ROW_COPY_POINTERS, clust_index, prev_version, heap);
+			row = row_build(ROW_COPY_POINTERS, prev_version, clust_index, heap);
 			entry = row_build_index_entry(row, index, heap);
 		}
 
@@ -159,6 +159,8 @@ trx_t* row_vers_impl_x_locked_off_kernel(rec_t* rec, dict_index_t* index)
 
 	mtr_commit(&mtr);
 	mem_heap_free(heap);
+
+	return trx;
 }
 
 /*假如trx id >= purge view trx ids, 需要对一个处于del mark的记录早期版本做删除保护,如果需要保护返回TRUE*/

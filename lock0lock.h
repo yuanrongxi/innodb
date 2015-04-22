@@ -79,7 +79,7 @@ ibool					lock_is_on_table(dict_table_t* table);
 
 void					lock_table_unlock_auto_inc(trx_t* trx);
 
-void					lock_release_off_kernel(trx_id* trx);
+void					lock_release_off_kernel(trx_t* trx);
 
 void					lock_cancel_waiting_and_release(lock_t* lock);
 
