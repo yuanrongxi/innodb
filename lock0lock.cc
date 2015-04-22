@@ -1571,7 +1571,7 @@ UNIV_INLINE void lock_table_remove_low(lock_t* lock)
 
 	ut_ad(mutex_own(&kernel_mutex));
 
-	table = lock->un_member.table_lock.table;
+	table = lock->un_member.tab_lock.table;
 	trx = lock->trx;
 
 	/*×ÔÔö³¤Ëø*/
