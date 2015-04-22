@@ -473,7 +473,7 @@ static void que_thr_move_to_run_state(que_thr_t* thr)
 }
 
 /*对que thread的引用计数进行递减，可能会启动对应事务新的sig handling*/
-static void que_thr_dec_refer_count(que_thr_t* que_thr_t** next_thr)
+static void que_thr_dec_refer_count(que_thr_t*thr, que_thr_t** next_thr)
 {
 	que_fork_t*	fork;
 	trx_t*		trx;
