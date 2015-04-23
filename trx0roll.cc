@@ -524,7 +524,7 @@ void trx_rollback(trx_t* trx, trx_sig_t* sig, que_thr_t** next_thr)
 	thr = que_fork_start_command(roll_graph, SESS_COMM_EXECUTE, 0);
 	ut_ad(thr);
 
-	if(next_thr && (*next_ptr == NULL))
+	if(next_thr && (*next_thr == NULL))
 		*next_thr = thr;
 	else
 		srv_que_task_enqueue_low(thr);

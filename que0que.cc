@@ -839,7 +839,7 @@ que_thr_t* que_thr_check_if_switch(que_thr_t* thr, ulint* cumul_reource)
 		thr->resource = 0;
 	}
 
-	(*cumul_resource)++;
+	(*cumul_reource)++;
 	/*server task queue用轮询方式执行query thread*/
 	if(*cumul_reource > QUE_ROUND_ROBIN_LIMIT){
 		if(srv_get_thread_type() == SRV_COM){
@@ -849,7 +849,7 @@ que_thr_t* que_thr_check_if_switch(que_thr_t* thr, ulint* cumul_reource)
 		}
 		else
 			thr = srv_que_round_robin(thr);
-		*curmul_resource = 0;
+		*cumul_reource = 0;
 	}
 
 	return thr;
