@@ -148,7 +148,7 @@ void btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tup
 	if(has_search_latch)
 		rw_lock_s_unlock(&btr_search_latch);
 
-	/*获得mtr 的保存数据长度*/
+	/*设置一个mini transcation的保存点，以便mtr rollback*/
 	savepoint = mtr_set_savepoint(mtr);
 
 	tree = index->tree;
@@ -195,7 +195,7 @@ void btr_cur_search_to_nth_level(dict_index_t* index, ulint level, dtuple_t* tup
 		}
 
 retry_page_get:
-		page = buf_page_get_gen(space, page_no, rw_latch, guess, buf_mode, IB__FILE__, __LINE__, mtr);
+		page = buf_page_get_gen(space, page_no, rw_latch, guess, buf_mode, __FILE__, __LINE__, mtr);
 		if(page == NULL){
 			ut_ad(buf_mode == BUF_GET_IF_IN_POOL);
 			ut_ad(insert_planned);

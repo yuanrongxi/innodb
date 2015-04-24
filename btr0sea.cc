@@ -417,7 +417,7 @@ ibool btr_search_guess_on_hash(dict_index_t* index, btr_search_t* info, dtuple_t
 
 	page = buf_frame_align(rec);
 	if(!has_search_latch){ /*做记录校验*/
-		success = buf_page_get_known_nowait(latch_mode, page, BUF_MAKE_YOUNG, IB__FILE__, __LINE__, mtr);
+		success = buf_page_get_known_nowait(latch_mode, page, BUF_MAKE_YOUNG, __FILE__, __LINE__, mtr);
 		rw_lock_s_unlock(&btr_search_latch);
 		if(!success)
 			goto failure;
