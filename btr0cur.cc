@@ -302,7 +302,7 @@ void btr_cur_open_at_index_side(ibool from_left, dict_index_t* index, ulint latc
 	height = ULINT_UNDEFINED;
 	for(;;){
 		page = buf_page_get_gen(space, page_no, RW_NO_LATCH, NULL,
-			BUF_GET, IB__FILE__, __LINE__, mtr);
+			BUF_GET, __FILE__, __LINE__, mtr);
 
 		ut_ad(0 == ut_dulint_cmp(tree->id, btr_page_get_index_id(page)));
 
@@ -371,7 +371,7 @@ void btr_cur_open_at_rnd_pos(dict_index_t* index, ulint latch_mode, btr_cur_t* c
 
 	height = ULINT_UNDEFINED;
 	for(;;){
-		page = buf_page_get_gen(space, page_no, RW_NO_LATCH, NULL, BUF_GET, IB__FILE__, __LINE__, mtr);
+		page = buf_page_get_gen(space, page_no, RW_NO_LATCH, NULL, BUF_GET, __FILE__, __LINE__, mtr);
 		ut_ad(0 == ut_dulint_cmp(tree->id, btr_page_get_index_id(page)));
 
 		if(height == ULINT_UNDEFINED)
