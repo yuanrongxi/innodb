@@ -64,7 +64,7 @@ typedef struct fil_system_struct
 	os_event_t		can_open;			/*可以打开新的文件的信号*/
 	
 	UT_LIST_BASE_NODE_T(fil_node_t) LRU;			/*最近被打开操作过的文件,用于快速定位关闭的fil_node*/
-	UT_LIST_BASE_NODE_T(fil_node_t) space_list;		/*file space的对象列表*/
+	UT_LIST_BASE_NODE_T(fil_space_t) space_list;	/*file space的对象列表*/
 }fil_system_t;
 
 

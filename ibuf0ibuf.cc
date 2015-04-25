@@ -163,7 +163,7 @@ void ibuf_init_at_db_start()
 
 	/*创建线程并发的latch对象*/
 	mutex_create(&ibuf_pessimistic_insert_mutex);
-	mutex_set_level(ibuf_pessimistic_insert_mutex, SYNC_IBUF_PESS_INSERT_MUTEX);
+	mutex_set_level(&ibuf_pessimistic_insert_mutex, SYNC_IBUF_PESS_INSERT_MUTEX);
 
 	mutex_create(&ibuf_mutex);
 	mutex_set_level(&ibuf_mutex, SYNC_IBUF_MUTEX);
@@ -391,7 +391,7 @@ static page_t* ibuf_bitmap_get_map_page(ulint space, ulint page_no, mtr_t* mtr)
 {
 	page_t*	page;
 
-	page = buf_get_get(space, ibuf_bitmap_page_no_calc(page_no), RW_X_LATCH, mtr);
+	page = buf_page_get(space, ibuf_bitmap_page_no_calc(page_no), RW_X_LATCH, mtr);
 	buf_page_dbg_add_level(page, SYNC_IBUF_BITMAP);
 
 	return page;
