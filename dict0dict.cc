@@ -911,6 +911,7 @@ static dict_index_t* dict_index_build_internal_non_clust(dict_table_t* table, di
 
 	dict_index_copy(new_index, index, 0, index->n_fields);
 
+	/*检查非聚集索引是否包含聚集索引，如果不包含，自动叫聚集索引列放入非聚集索引集合中,这样做是为了保证索引的唯一性*/
 	for (i = 0; i < clust_index->n_uniq; i++) {
 		field = dict_index_get_nth_field(clust_index, i);
 		(field->col)->aux = ULINT_UNDEFINED;
