@@ -530,7 +530,7 @@ static ibool sync_thread_levels_g(sync_level_t* arr, ulint limit)
 	os_thread_id_t	thread_id;
 	sync_level_t*	slot;
 	rw_lock_t*		lock;
-	mutex*			mutex;
+	mutex_t*		mutex;
 	ulint			i;
 
 	for(i = 0; i < SYNC_THREAD_N_LEVELS; i ++){
@@ -637,7 +637,8 @@ void sync_thread_add_level(void* latch, ulint level)
 		return ;
 
 	/*不是全局锁*/
-	if ((latch == (void*)&sync_thread_mutex) || (latch == (void*)&mutex_list_mutex)|| (latch == (void*)&rw_lock_debug_mutex) || (latch == (void*)&rw_lock_list_mutex))
+	if ((latch == (void*)&sync_thread_mutex) || (latch == (void*)&mutex_list_mutex)
+		|| (latch == (void*)&rw_lock_debug_mutex) || (latch == (void*)&rw_lock_list_mutex))
 		return;
 
 	if(level == SYNC_LEVEL_NONE)
