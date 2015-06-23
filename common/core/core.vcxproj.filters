@@ -63,9 +63,6 @@
     <ClCompile Include="core_udp_handler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="dc_short_conn.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_bandwidth_throttler.h">
@@ -135,15 +132,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="core_udp_handler.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="dc_short_conn.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="core_messgae_template.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="data_center_msg.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

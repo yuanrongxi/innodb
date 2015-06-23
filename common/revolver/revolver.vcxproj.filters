@@ -72,22 +72,10 @@
     <ClCompile Include="gettimeofday.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="timer_ring.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="md5c.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="minilzo.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="lzo_object.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="base_file.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="date_time.cpp">
+    <ClCompile Include="timer_ring.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -198,18 +186,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="timer_ring.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="minilzo.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="lzo_object.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="base_file.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="date_time.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

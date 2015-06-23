@@ -1102,6 +1102,7 @@ static void log_group_checkpoint(log_group_t* group)
 		log_sys->n_pending_checkpoint_writes ++;
 		log_sys->n_log_ios ++;
 
+		/*写入group space的0 ~ 2048中，如果是LOG_CHECKPOINT_1从0（文件的第一个扇区）偏移开始写入，如果是LOG_CHECKPOINT_2从1536（文件的第4个扇区）偏移处开始写*/
 		fil_io(OS_FILE_WRITE | OS_FILE_LOG, FALSE, group->space_id, write_offset / UNIV_PAGE_SIZE, write_offset % UNIV_PAGE_SIZE, OS_FILE_LOG_BLOCK_SIZE,
 			buf, ((byte*)group + 1));
 
