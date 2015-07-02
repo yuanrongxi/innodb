@@ -814,6 +814,9 @@ void os_aio_simulated_put_read_threads_to_sleep()
 ibool os_aio(ulint type, ulint mode, char* name, os_file_t file, void* buf, ulint offset, ulint offset_high, 
 	ulint n, void* message1, void* message2)
 {
+	os_aio_array_t*	array;
+	os_aio_slot_t*	slot;
+
 	ulint		err	= 0;
 	ibool		retry;
 	ulint		wake_later;
@@ -977,6 +980,9 @@ restart:
 	ut_ad(os_aio_validate());
 	ut_ad(segment < array->n_segments);
 	
+	/*计算一个segment对应的slot个数*/
+	n = array->n_slots / array->n_segments;
+
 	if(array == os_aio_read_array && os_aio_recommend_sleep_for_read_threads){
 		goto recommended_sleep;
 	}
